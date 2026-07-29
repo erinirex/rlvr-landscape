@@ -1,0 +1,44 @@
+{
+  "added_tokens_decoder": {
+    "0": {
+      "content": "<bos>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "1": {
+      "content": "<eos>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "2": {
+      "content": "<unk>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    }
+  },
+  "auto_map": {
+    "AutoTokenizer": [
+      "tokenizer.HFTokenizerWrapper",
+      null
+    ]
+  },
+  "bos_token": "<bos>",
+  "clean_up_tokenization_spaces": false,
+  "env_id": 84,
+  "eos_token": "<eos>",
+  "extra_special_tokens": {},
+  "model_max_length": 3072,
+  "pad_token": "<bos>",
+  "tokenizer_class": "HFTokenizerWrapper",
+  "tokenizer_file": null,
+  "unk_token": "<unk>"
+}
