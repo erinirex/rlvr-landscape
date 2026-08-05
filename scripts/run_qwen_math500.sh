@@ -1,44 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bash scripts/run_qwen_gsm8k.sh
+# bash scripts/run_qwen_math500.sh
 
-# ===== GSM8K experiment settings =====
-GPUS="3,5,0,1"
-NUM_GPUS=3
-MASTER_PORT=29503
+# ===== Math500 experiment settings =====
+GPUS="2,3,4,5"
+NUM_GPUS=4
+MASTER_PORT=29501
 # PYTHON_SCRIPT="visualize_reward_landscape.py"
 PYTHON_SCRIPT="visualize_reward_landscape_paral.py"
 
-
-MODEL_CKPT="/mnt/sj/home/yichen/ms-swift/output_qwen3_1.7b_grpo_gsm8k_train200_test100_max512_full/v0-20260724-144147/checkpoint-100"
+MODEL_CKPT="/mnt2/public_models/Qwen3-0.6B-Base"
 # MODEL_CKPT="/mnt/sj/home/yichen/ms-swift/output_qwen3_1.7b_grpo_gsm8k_full/v1-20260625-011426/checkpoint-600"
 # MODEL_CKPT="/mnt/sj/home/yichen/ms-swift/output_qwen3_1.7b_grpo_gsm8k_full/v1-20260625-011426/checkpoint-600"
 # MODEL_CKPT="/mnt/sj/home/yichen/ms-swift/output_qwen3_1.7b_dapo_gsm8k_train200_test100_max256_full/v1-20260729-142241/checkpoint-25"
 
-EVAL_JSON="/mnt/sj/home/yichen/landscape_rlvr/train_data/gsm8k_swift/train_sample200.jsonl"
+EVAL_JSON="/mnt/sj/home/yichen/landscape_rlvr/train_data/math500/test/test.jsonl"
 # EVAL_JSON="/mnt/sj/home/yichen/landscape_rlvr/train_data/gsm8k_swift/train.jsonl"
 
-TASK="gsm8k"
-RL_TYPE="grpo"
-DATASET="gsm8k_sample200"
-MODEL_NAME="qwen3_1.7b"
-CHECKPOINT_STEP=100
+TASK="math500"
+RL_TYPE="base"
+DATASET="math500"
+MODEL_NAME="qwen3_0.6b_base"
+CHECKPOINT_STEP=0
 
-NUM_SAMPLES=200
-BATCH_SIZE=128
+NUM_SAMPLES=500
+BATCH_SIZE=64
 MAX_NEW_TOKENS=512
 SEED=42
 SCALE=0.01
 ALPHA_RANGE=9
 NUM_POINTS=41
-NUM_DIRECTIONS=2
+NUM_DIRECTIONS=1
 YMIN=0.0
 YMAX=1.0
-OUTPUT_DIR="figs_gsm8k_new"
+OUTPUT_DIR="figs_math500_base"
 
-RUN_NAME="${RL_TYPE}_${DATASET}_scale${SCALE}_alpha${ALPHA_RANGE}_data${NUM_SAMPLES}_ckpt${CHECKPOINT_STEP}_max_new${MAX_NEW_TOKENS}_bs${BATCH_SIZE}_pts${NUM_POINTS}_seed${SEED}_${NUM_DIRECTIONS}dirs"
-LOG_DIR="logs_gsm8k"
+RUN_NAME="${RL_TYPE}_${DATASET}_${MODEL_NAME}_scale${SCALE}_alpha${ALPHA_RANGE}_data${NUM_SAMPLES}_ckpt${CHECKPOINT_STEP}_max_new${MAX_NEW_TOKENS}_bs${BATCH_SIZE}_pts${NUM_POINTS}_seed${SEED}_${NUM_DIRECTIONS}dirs"
+LOG_DIR="logs_math500_base"
 mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}"
 LOG_FILE="${LOG_DIR}/${RUN_NAME}.log"
 

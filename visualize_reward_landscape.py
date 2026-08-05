@@ -2,12 +2,12 @@
 """Evaluate a model's mean reward along random parameter-space directions."""
 
 import argparse
+import ast
 import json
 import os
 import re
 from pathlib import Path
 from typing import Any, Callable
-import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -15,23 +15,7 @@ import torch
 import torch.distributed as dist
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
-
-sys.path.append(
-    "/mnt/sj/home/yichen/landscape_rlvr/"
-    "train_data/chess/chess rl/miles"
-)
-sys.path.append(
-    "/mnt/sj/home/yichen/landscape_rlvr/"
-    "train_data/chess/chess rl/chess-rl-miles"
-)
-
-from chess_rl_miles.moves import (
-    extract_first_move,
-    extract_move_after_thinking,
-    parse_ground_truth,
-    safe_move_to_uci,
-)
+from decimal import Decimal, InvalidOperation
 
 RewardFn = Callable[..., float]
 
@@ -235,8 +219,54 @@ def load_eval_data(
     return data
 
 
+from decimal import Decimal, InvalidOperation
+import re
+
+
+NUMBER_PATTERN = (
+    r"[-+]?"
+    r"(?:"
+    r"\d{1,3}(?:,\d{3})+"
+    r"|"
+    r"\d+(?:\.\d*)?"
+    r"|"
+    r"\.\d+"
+    r")"
+    r"(?:[eE][-+]?\d+)?"
+)
+
+
 def normalize_number(text: str) -> str:
-    return text.replace(",", "").strip()
+    """Basic textual cleanup for an extracted number."""
+    return (
+        str(text)
+        .replace(",", "")
+        .replace("$", "")
+        .strip()
+        .rstrip(".")
+    )
+
+
+def parse_decimal(text: str) -> Decimal | None:
+    cleaned = normalize_number(text)
+
+    if not cleaned:
+        return None
+
+    try:
+        return Decimal(cleaned)
+    except InvalidOperation:
+        return None
+
+
+def extract_last_number(text: str) -> str:
+    """Extract the last valid numeric value from text."""
+    matches = list(re.finditer(NUMBER_PATTERN, text))
+
+    if not matches:
+        return ""
+
+    return normalize_number(matches[-1].group(0))
 
 
 def extract_final_answer(text: str) -> str:
@@ -244,22 +274,26 @@ def extract_final_answer(text: str) -> str:
         r"\\boxed\s*\{\s*([^{}]+?)\s*\}",
         text,
     )
+
     if boxed_matches:
-        return normalize_number(boxed_matches[-1])
+        extracted = extract_last_number(boxed_matches[-1])
+
+        if extracted:
+            return extracted
 
     final_answer_match = re.search(
         r"Final\s+Answer\s*:?\s*(.*)",
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
+
     if final_answer_match:
-        final_section = final_answer_match.group(1)
-        numbers = re.findall(
-            r"-?\d+(?:,\d{3})*(?:\.\d+)?",
-            final_section,
+        extracted = extract_last_number(
+            final_answer_match.group(1)
         )
-        if numbers:
-            return normalize_number(numbers[-1])
+
+        if extracted:
+            return extracted
 
     return ""
 
@@ -267,23 +301,17 @@ def extract_final_answer(text: str) -> str:
 def extract_ground_truth(answer: str) -> str:
     answer = str(answer).strip()
 
-    if re.fullmatch(r"-?\d+(?:,\d{3})*(?:\.\d+)?", answer):
-        return normalize_number(answer)
-
     if "####" in answer:
         final_part = answer.rsplit("####", 1)[-1]
-        numbers = re.findall(
-            r"-?\d+(?:,\d{3})*(?:\.\d+)?",
-            final_part,
-        )
-        if numbers:
-            return normalize_number(numbers[-1])
+        extracted = extract_last_number(final_part)
 
-    extracted = extract_final_answer(answer)
-    if extracted:
-        return extracted
+        if extracted:
+            return extracted
 
-    return ""
+    if re.fullmatch(NUMBER_PATTERN, answer):
+        return normalize_number(answer)
+
+    return extract_final_answer(answer)
 
 
 def gsm8k_reward_func(
@@ -291,14 +319,16 @@ def gsm8k_reward_func(
     answer: str,
     **_: Any,
 ) -> float:
-    prediction = extract_final_answer(completion)
-    target = extract_ground_truth(answer)
+    prediction_text = extract_final_answer(completion)
+    target_text = extract_ground_truth(answer)
 
-    return float(
-        bool(prediction)
-        and bool(target)
-        and prediction == target
-    )
+    prediction = parse_decimal(prediction_text)
+    target = parse_decimal(target_text)
+
+    if prediction is None or target is None:
+        return 0.0
+
+    return float(prediction == target)
 
 
 def get_fen(metadata: dict[str, Any], extra_info: dict[str, Any]) -> str:
@@ -309,69 +339,224 @@ def get_fen(metadata: dict[str, Any], extra_info: dict[str, Any]) -> str:
     return ""
 
 
-def extract_raw_move(text: str) -> str:
-    move, follows_format = extract_move_after_thinking(
-        text, strict_single_close=True
+# Single-turn chess reward: mirrors the training-time reward in
+# pre2post-chess/rl/verl/reward_function.py (single-turn variant, i.e. only the
+# first move after </T> is scored). The multiturn variant that splits on
+# <call_env> is deliberately NOT used here.
+CHESS_SINGLE_TURN_REWARD_MODEL_TYPE = os.environ.get(
+    "REWARD_MODEL_TYPE", "RULE_BASED"
+).upper()
+
+
+def lan_to_uci(lan: str, side_to_move: str = "white") -> str:
+    """Convert custom LAN move (e.g. "Pd2d4", "Pd4xe5", "Pe7e8=Q", "O-O") to UCI.
+
+    Raises:
+        ValueError if the LAN string is not in the expected format.
+    """
+    lan = lan.rstrip("+#").strip()
+
+    if lan == "O-O":
+        if side_to_move == "white":
+            return "e1g1"
+        if side_to_move == "black":
+            return "e8g8"
+        raise ValueError("Invalid side_to_move for castling")
+
+    if lan == "O-O-O":
+        if side_to_move == "white":
+            return "e1c1"
+        if side_to_move == "black":
+            return "e8c8"
+        raise ValueError("Invalid side_to_move for castling")
+
+    match = re.match(
+        r"^([PNBRQK])([a-h][1-8])(x)?([a-h][1-8])(=([QRBN]))?$", lan
     )
-    if move is None and not follows_format:
-        move = extract_first_move(text)
-    if move is None and "</T>" in text:
-        suffix = text.split("</T>", 1)[1].strip()
-        move = suffix.split()[0] if suffix else None
-    return str(move).strip("`*_.,;: ") if move else ""
+    if not match:
+        raise ValueError(f"Invalid LAN format: {lan}")
+
+    _piece, from_square, _capture, to_square, _promo_group, promo = match.groups()
+
+    uci = from_square + to_square
+    if promo:
+        uci += promo.lower()  # UCI uses lowercase for promotion (q/r/b/n)
+
+    return uci
 
 
-def move_to_uci(move_text: str, fen: str = "") -> str:
+def is_complete_move(text: str) -> bool:
+    """Whether text is a complete move in the custom LAN format."""
+    if not text:
+        return False
+
+    move = text.rstrip("+#")
+
+    if move in ("O-O", "O-O-O"):
+        return True
+
+    return bool(
+        re.match(r"^[PNBRQK][a-h][1-8](x)?[a-h][1-8](=[QRBN])?$", move)
+    )
+
+
+def extract_first_move(text: str) -> str | None:
+    """Return the first complete move in text, skipping move numbers."""
+    tokens = text.strip().split()
+
+    for token in tokens:
+        if re.match(r"^\d+\.{1,3}$", token):
+            continue
+        if is_complete_move(token):
+            return token
+
+    return None
+
+
+def extract_move_after_thinking(text: str) -> tuple[str | None, bool]:
+    """Extract the first move after </T>.
+
+    Strict mode: the format only counts as followed when exactly one </T> is
+    present; otherwise returns (None, False).
+    """
+    text = text.strip()
+
+    follows_format = text.count("</T>") == 1
+
+    if not follows_format:
+        return None, False
+
+    text_after_thinking = text[
+        text.find("</T>") + len("</T>") :
+    ].strip()
+
+    if not text_after_thinking:
+        return None, follows_format
+
+    return extract_first_move(text_after_thinking), follows_format
+
+
+def parse_chess_ground_truth(answer: Any) -> str:
+    """Normalize the ground truth into a single target UCI move (first move)."""
+    ground_truth = answer
+
+    if isinstance(ground_truth, str):
+        try:
+            ground_truth = json.loads(ground_truth)
+        except json.JSONDecodeError:
+            try:
+                ground_truth = ast.literal_eval(ground_truth)
+            except (ValueError, SyntaxError):
+                pass
+
+    if isinstance(ground_truth, list) and ground_truth:
+        return str(ground_truth[0]).strip()
+
+    return str(ground_truth).strip()
+
+
+def check_move_legality(fen: str, uci_move: str) -> float:
+    """1.0 if uci_move is legal on the board described by fen, else 0.0."""
+    if not fen or not uci_move:
+        return 0.0
+    try:
+        import chess
+
+        board = chess.Board(fen)
+        move = chess.Move.from_uci(uci_move)
+        return 1.0 if move in board.legal_moves else 0.0
+    except Exception:
+        return 0.0
+
+
+def chess_single_turn_move_to_uci(move_text: str) -> str:
+    """Convert an extracted LAN move to UCI, returning "" on failure."""
     if not move_text:
         return ""
-
-    coordinate_move = re.search(
-        r"\b[a-h][1-8][a-h][1-8][qrbn]?\b", move_text.lower()
-    )
-    if coordinate_move:
-        return coordinate_move.group(0)
-
     try:
-        uci = safe_move_to_uci(move_text)
-        if uci:
-            return uci.lower()
-    except Exception:
-        pass
-
-    if fen:
-        try:
-            import chess
-
-            return chess.Board(fen).parse_san(move_text).uci().lower()
-        except Exception:
-            pass
-    return ""
+        return lan_to_uci(move_text)
+    except ValueError:
+        return ""
 
 
-def chess_reward_func(
+def extract_chess_single_turn_move(completion: str) -> tuple[str, bool]:
+    """Extract the scored move from a single-turn completion.
+
+    Returns:
+        (raw_move, follows_format) where raw_move is "" when nothing parsed.
+    """
+    move, follows_format = extract_move_after_thinking(completion)
+
+    if move is None and not follows_format:
+        move = extract_first_move(completion)
+
+    return (move.strip() if move else ""), follows_format
+
+
+def chess_single_turn_reward_func(
     completion: str,
     answer: str,
     metadata: dict[str, Any] | None = None,
     extra_info: dict[str, Any] | None = None,
     **_: Any,
 ) -> float:
-    metadata = metadata or {}
-    extra_info = extra_info or {}
-    target_moves = {
-        str(move).strip().lower()
-        for move in parse_ground_truth(answer, metadata)
-        if str(move).strip()
-    }
-    prediction = move_to_uci(
-        extract_raw_move(completion), get_fen(metadata, extra_info)
-    )
-    return float(bool(prediction) and prediction in target_moves)
+    raw_move, follows_format = extract_chess_single_turn_move(completion)
+    prediction = chess_single_turn_move_to_uci(raw_move)
+    target = parse_chess_ground_truth(answer)
+
+    score = float(bool(prediction) and prediction == target)
+
+    if CHESS_SINGLE_TURN_REWARD_MODEL_TYPE == "RULE_FORMAT_BASED" and not follows_format:
+        return 0.0
+
+    return score
 
 
 def select_reward_func(task: str, checkpoint_path: str) -> RewardFn:
     if task == "auto":
         task = "chess" if "chess" in checkpoint_path.lower() else "gsm8k"
-    return chess_reward_func if task == "chess" else gsm8k_reward_func
+    return (
+        chess_single_turn_reward_func if task == "chess" else gsm8k_reward_func
+    )
+
+
+def encode_batch_left_padded(
+    tokenizer: Any,
+    texts: list[str],
+    device: Any,
+) -> dict[str, torch.Tensor]:
+    """Tokenize texts and left-pad them for decoder-only generation.
+
+    The chess checkpoint ships a custom tokenizer whose __call__ always appends
+    padding on the right and ignores tokenizer.padding_side, which makes
+    model.generate() warn about right-padding and continue from pad tokens.
+    Padding here keeps batching correct regardless of the tokenizer.
+    """
+    sequences = [
+        list(tokenizer.encode(text, add_special_tokens=True)) for text in texts
+    ]
+
+    pad_id = tokenizer.pad_token_id
+    if pad_id is None:
+        pad_id = tokenizer.eos_token_id
+    if pad_id is None:
+        pad_id = 0
+
+    width = max(len(ids) for ids in sequences)
+
+    input_ids = [
+        [pad_id] * (width - len(ids)) + ids for ids in sequences
+    ]
+    attention_mask = [
+        [0] * (width - len(ids)) + [1] * len(ids) for ids in sequences
+    ]
+
+    return {
+        "input_ids": torch.tensor(input_ids, dtype=torch.long, device=device),
+        "attention_mask": torch.tensor(
+            attention_mask, dtype=torch.long, device=device
+        ),
+    }
 
 
 def get_target_state(model: torch.nn.Module) -> dict[str, torch.Tensor]:
@@ -475,11 +660,7 @@ def eval_mean_reward(
                 for example in batch
             ]
 
-        inputs = tokenizer(
-            texts,
-            return_tensors="pt",
-            padding=True,
-        ).to(model.device)
+        inputs = encode_batch_left_padded(tokenizer, texts, model.device)
 
         outputs = model.generate(
             **inputs,
@@ -519,7 +700,7 @@ def eval_mean_reward(
                 extra_info=example.get("extra_info"),
             )
 
-            if rank == 0 and local_reward_count < 2:
+            if rank == 0 and local_reward_count < 3:
                 likely_truncated = (
                     not ended_with_eos
                     and len(raw_generated_ids) >= max_new_tokens
@@ -536,23 +717,22 @@ def eval_mean_reward(
                     extra_info = example.get("extra_info") or {}
 
                     fen = get_fen(metadata, extra_info)
-                    raw_move = extract_raw_move(completion)
-                    predicted_uci = move_to_uci(raw_move, fen)
-
-                    target_moves = {
-                        str(move).strip().lower()
-                        for move in parse_ground_truth(
-                            example["answer"],
-                            metadata,
-                        )
-                        if str(move).strip()
-                    }
+                    raw_move, follows_format = extract_chess_single_turn_move(
+                        completion
+                    )
+                    predicted_uci = chess_single_turn_move_to_uci(raw_move)
+                    target_move = parse_chess_ground_truth(example["answer"])
 
                     print(f"Contains </T>: {'</T>' in completion}")
+                    print(f"Follows <T></T> format: {follows_format}")
                     print(f"Raw extracted move: {raw_move!r}")
                     print(f"Predicted UCI: {predicted_uci!r}")
-                    print(f"Target moves: {sorted(target_moves)}")
+                    print(f"Target move: {target_move!r}")
                     print(f"Ground truth: {example['answer']!r}")
+                    print(
+                        "First move legality: "
+                        f"{check_move_legality(fen, predicted_uci)}"
+                    )
                     print(f"FEN: {fen}")
 
                 elif task == "gsm8k":
@@ -646,7 +826,7 @@ def save_results(df: pd.DataFrame, args: argparse.Namespace) -> tuple[Path, Path
     plt.xlabel("Perturbation coefficient")
     plt.ylabel("Mean reward")
     plt.title(
-        f"{args.rl_type.upper()} {args.dataset} reward landscape"
+        f"{args.rl_type.upper()} {args.dataset} step {args.checkpoint_step} reward landscape"
     )
     plt.ylim(args.ymin, args.ymax)
     plt.minorticks_on()
