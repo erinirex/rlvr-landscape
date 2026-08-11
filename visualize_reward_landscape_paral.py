@@ -5,7 +5,7 @@ import argparse
 import ast
 import json
 import os
-import sympy as sp
+from swift.grading.grader import grade_answer
 import re
 from pathlib import Path
 from typing import Any, Callable
@@ -24,6 +24,24 @@ RewardFn = Callable[..., float]
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Plot a 1D reward landscape along random model directions."
+    )
+    parser.add_argument(
+        "--group-size",
+        type=int,
+        default=4,
+        help="Number of sampled generations per prompt",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="Sampling temperature when group-size > 1",
+    )
+    parser.add_argument(
+        "--top-p",
+        type=float,
+        default=1.0,
+        help="Top-p sampling value when group-size > 1",
     )
     parser.add_argument("--model-ckpt", required=True, help="Checkpoint path")
     parser.add_argument("--eval-json", required=True, help="Evaluation JSONL path")
@@ -112,9 +130,34 @@ def extract_prompt_from_messages(
 
     return "\n".join(prompt_parts).strip()
 
-def extract_math500_answer(text: str) -> str:
-    """Extract a mathematical answer from a model completion."""
+def extract_answer_tag(
+    text: str,
+) -> tuple[str, bool]:
+    """Extract the last <answer>...</answer> block."""
+    matches = re.findall(
+        r"<answer>(.*?)</answer>",
+        str(text),
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    if matches:
+        return matches[-1].strip(), True
+
+    return str(text).strip(), False
+
+
+def extract_math500_answer(
+    text: str,
+) -> tuple[str, str]:
+    """Extract a Math500 answer and its extraction method."""
     text = str(text).strip()
+
+    tagged_answer, has_answer_tag = extract_answer_tag(
+        text
+    )
+
+    if has_answer_tag:
+        return tagged_answer, "answer_tag"
 
     boxed_answers = extract_latex_command_argument(
         text,
@@ -122,7 +165,7 @@ def extract_math500_answer(text: str) -> str:
     )
 
     if boxed_answers:
-        return boxed_answers[-1].strip()
+        return boxed_answers[-1].strip(), "boxed"
 
     final_answer_matches = list(
         re.finditer(
@@ -136,359 +179,48 @@ def extract_math500_answer(text: str) -> str:
         answer_start = final_answer_matches[-1].end()
         answer_text = text[answer_start:].strip()
 
-        # Prefer the first non-empty line after "Final Answer".
         for line in answer_text.splitlines():
             cleaned_line = line.strip()
 
             if cleaned_line:
-                return cleaned_line
+                return cleaned_line, "final_answer"
 
-    return ""
+    # Do not send the entire reasoning trace to grade_answer.
+    return "", "no_answer_marker"
 
 
-def strip_math_delimiters(text: str) -> str:
-    text = str(text).strip()
+def extract_math500_gold(answer: Any) -> str:
+    """Normalize a Math500 ground-truth answer."""
+    if answer is None:
+        return ""
 
-    delimiter_pairs = (
-        ("$$", "$$"),
-        ("\\[", "\\]"),
-        ("\\(", "\\)"),
-        ("$", "$"),
+    if isinstance(answer, dict):
+        if "answer" in answer:
+            answer = answer["answer"]
+        elif "solution" in answer:
+            answer = answer["solution"]
+
+    text = str(answer).strip()
+
+    tagged_answer, has_answer_tag = extract_answer_tag(
+        text
     )
 
-    changed = True
+    if has_answer_tag:
+        return tagged_answer
 
-    while changed:
-        changed = False
+    # This also supports a full worked solution whose final
+    # answer is contained in \boxed{...}.
+    boxed_answers = extract_latex_command_argument(
+        text,
+        "boxed",
+    )
 
-        for left, right in delimiter_pairs:
-            if (
-                text.startswith(left)
-                and text.endswith(right)
-                and len(text) >= len(left) + len(right)
-            ):
-                text = text[
-                    len(left) : len(text) - len(right)
-                ].strip()
-                changed = True
+    if boxed_answers:
+        return boxed_answers[-1].strip()
 
+    # Math500's answer/solution field may already be a plain answer.
     return text
-
-
-def replace_latex_fractions(text: str) -> str:
-    """Convert nested \\frac{a}{b} expressions to ((a)/(b))."""
-    fraction_pattern = re.compile(r"\\(?:d)?frac\s*\{")
-
-    while True:
-        match = fraction_pattern.search(text)
-
-        if match is None:
-            break
-
-        numerator_start = match.end()
-        depth = 1
-        index = numerator_start
-
-        while index < len(text) and depth > 0:
-            if text[index] == "{":
-                depth += 1
-            elif text[index] == "}":
-                depth -= 1
-            index += 1
-
-        if depth != 0:
-            break
-
-        numerator = text[
-            numerator_start : index - 1
-        ]
-
-        while index < len(text) and text[index].isspace():
-            index += 1
-
-        if index >= len(text) or text[index] != "{":
-            break
-
-        denominator_start = index + 1
-        depth = 1
-        index = denominator_start
-
-        while index < len(text) and depth > 0:
-            if text[index] == "{":
-                depth += 1
-            elif text[index] == "}":
-                depth -= 1
-            index += 1
-
-        if depth != 0:
-            break
-
-        denominator = text[
-            denominator_start : index - 1
-        ]
-
-        replacement = (
-            f"(({replace_latex_fractions(numerator)})"
-            f"/({replace_latex_fractions(denominator)}))"
-        )
-
-        text = (
-            text[: match.start()]
-            + replacement
-            + text[index:]
-        )
-
-    return text
-
-
-def replace_latex_sqrt(text: str) -> str:
-    """Convert nested \\sqrt{x} expressions to sqrt(x)."""
-    sqrt_pattern = re.compile(r"\\sqrt\s*\{")
-
-    while True:
-        match = sqrt_pattern.search(text)
-
-        if match is None:
-            break
-
-        argument_start = match.end()
-        depth = 1
-        index = argument_start
-
-        while index < len(text) and depth > 0:
-            if text[index] == "{":
-                depth += 1
-            elif text[index] == "}":
-                depth -= 1
-            index += 1
-
-        if depth != 0:
-            break
-
-        argument = text[
-            argument_start : index - 1
-        ]
-
-        replacement = (
-            f"sqrt({replace_latex_sqrt(argument)})"
-        )
-
-        text = (
-            text[: match.start()]
-            + replacement
-            + text[index:]
-        )
-
-    return text
-
-
-def latex_to_sympy_text(text: str) -> str:
-    """Convert common Math500 LaTeX answers to SymPy syntax."""
-    text = strip_math_delimiters(text)
-
-    text = text.replace("\\left", "")
-    text = text.replace("\\right", "")
-    text = text.replace("\\,", "")
-    text = text.replace("\\!", "")
-    text = text.replace("\\;", "")
-    text = text.replace("\\:", "")
-    text = text.replace("−", "-")
-    text = text.replace("–", "-")
-    text = text.replace("^", "**")
-
-    text = replace_latex_fractions(text)
-    text = replace_latex_sqrt(text)
-
-    replacements = {
-        "\\cdot": "*",
-        "\\times": "*",
-        "\\div": "/",
-        "\\pi": "pi",
-        "\\infty": "oo",
-        "\\mathrm{i}": "I",
-        "\\operatorname{i}": "I",
-    }
-
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-
-    text = text.replace("{", "(")
-    text = text.replace("}", ")")
-
-    text = re.sub(
-        r"(?<![A-Za-z0-9_])i(?![A-Za-z0-9_])",
-        "I",
-        text,
-    )
-
-    # Add explicit multiplication.
-    text = re.sub(
-        r"(\d)(I|pi|sqrt|\()",
-        r"\1*\2",
-        text,
-    )
-    text = re.sub(
-        r"(\))(I|pi|sqrt|\d|\()",
-        r"\1*\2",
-        text,
-    )
-    text = re.sub(
-        r"(I|pi)(\d|\()",
-        r"\1*\2",
-        text,
-    )
-
-    return text.strip().rstrip(".,;")
-
-
-def parse_math_expression(
-    text: str,
-) -> sp.Expr | None:
-    """Parse a Math500 answer into a SymPy expression."""
-    cleaned = latex_to_sympy_text(text)
-
-    if not cleaned:
-        return None
-
-    try:
-        return sp.sympify(
-            cleaned,
-            locals={
-                "sqrt": sp.sqrt,
-                "pi": sp.pi,
-                "I": sp.I,
-                "oo": sp.oo,
-            },
-        )
-    except (
-        sp.SympifyError,
-        TypeError,
-        ValueError,
-        SyntaxError,
-    ):
-        return None
-
-
-def math_expressions_equal(
-    prediction: Any,
-    target: Any,
-) -> bool:
-    """Compare scalar and structured Math500 answers."""
-
-    # Handle SymPy tuples, Python tuples, and lists.
-    sequence_types = (tuple, list, sp.Tuple)
-
-    if isinstance(prediction, sequence_types) or isinstance(
-        target, sequence_types
-    ):
-        if not (
-            isinstance(prediction, sequence_types)
-            and isinstance(target, sequence_types)
-        ):
-            return False
-
-        if len(prediction) != len(target):
-            return False
-
-        return all(
-            math_expressions_equal(pred_item, target_item)
-            for pred_item, target_item in zip(prediction, target)
-        )
-
-    # Handle finite sets. Order does not matter.
-    if isinstance(prediction, sp.FiniteSet) or isinstance(
-        target, sp.FiniteSet
-    ):
-        if not (
-            isinstance(prediction, sp.FiniteSet)
-            and isinstance(target, sp.FiniteSet)
-        ):
-            return False
-
-        if len(prediction) != len(target):
-            return False
-
-        unmatched_targets = list(target)
-
-        for pred_item in prediction:
-            matched_index = None
-
-            for index, target_item in enumerate(unmatched_targets):
-                if math_expressions_equal(pred_item, target_item):
-                    matched_index = index
-                    break
-
-            if matched_index is None:
-                return False
-
-            unmatched_targets.pop(matched_index)
-
-        return True
-
-    # Handle matrices.
-    if isinstance(prediction, sp.MatrixBase) or isinstance(
-        target, sp.MatrixBase
-    ):
-        if not (
-            isinstance(prediction, sp.MatrixBase)
-            and isinstance(target, sp.MatrixBase)
-        ):
-            return False
-
-        if prediction.shape != target.shape:
-            return False
-
-        return all(
-            math_expressions_equal(pred_item, target_item)
-            for pred_item, target_item in zip(prediction, target)
-        )
-
-    # Direct equality first.
-    try:
-        if prediction == target:
-            return True
-    except Exception:
-        pass
-
-    # Symbolic equivalence for scalar expressions.
-    try:
-        difference = sp.simplify(prediction - target)
-
-        if difference == 0:
-            return True
-    except (
-        TypeError,
-        ValueError,
-        AttributeError,
-        NotImplementedError,
-    ):
-        pass
-
-    # Numeric fallback only for scalar numeric expressions.
-    try:
-        prediction_numeric = complex(sp.N(prediction, 30))
-        target_numeric = complex(sp.N(target, 30))
-
-        tolerance = 1e-10
-
-        return (
-            abs(prediction_numeric - target_numeric)
-            <= tolerance
-            * max(
-                1.0,
-                abs(prediction_numeric),
-                abs(target_numeric),
-            )
-        )
-
-    except (
-        TypeError,
-        ValueError,
-        AttributeError,
-        OverflowError,
-    ):
-        return False
-
 
 def load_gsm8k_example(
     example: dict[str, Any],
@@ -520,41 +252,42 @@ def load_math500_example(
 
     Expected format:
     {
-        "problem": "...",
-        "solution": "...",
-        "answer": "27",
-        "subject": "Number Theory",
-        "level": 3,
-        "unique_id": "test/number_theory/515.json"
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "..."
+                    }
+                ]
+            }
+        ],
+        "solution": "\\frac{8}{15}"
     }
     """
-    if "problem" not in example:
-        raise KeyError("Math500 example is missing 'problem'")
+    if "messages" not in example:
+        raise KeyError("Math500 example is missing 'messages'")
 
-    if "answer" not in example:
-        raise KeyError("Math500 example is missing 'answer'")
+    if "solution" not in example:
+        raise KeyError("Math500 example is missing 'solution'")
 
-    prompt = str(example["problem"]).strip()
-    answer = str(example["answer"]).strip()
+    prompt = extract_prompt_from_messages(
+        example["messages"]
+    )
+    answer = str(example["solution"]).strip()
 
     if not prompt:
-        raise ValueError("Math500 example has an empty problem")
+        raise ValueError("Math500 example has no user prompt")
 
     if not answer:
-        raise ValueError("Math500 example has an empty answer")
-
-    metadata = {
-        "solution": example.get("solution", ""),
-        "subject": example.get("subject"),
-        "level": example.get("level"),
-        "unique_id": example.get("unique_id"),
-    }
+        raise ValueError("Math500 example has an empty solution")
 
     return {
         "prompt": prompt,
         "answer": answer,
-        "metadata": metadata,
-        "extra_info": {},
+        "metadata": example.get("metadata", {}),
+        "extra_info": example.get("extra_info", {}),
     }
 
 def load_chess_example(
@@ -792,31 +525,36 @@ def math500_reward_func(
     answer: str,
     **_: Any,
 ) -> float:
-    prediction_text = extract_math500_answer(
+    prediction_text, _ = extract_math500_answer(
         completion
     )
-    target_text = str(answer).strip()
+
+    target_text = extract_math500_gold(
+        answer
+    )
 
     if not prediction_text or not target_text:
         return 0.0
 
-    prediction = parse_math_expression(
-        prediction_text
-    )
-    target = parse_math_expression(
-        target_text
-    )
-
-    if prediction is None or target is None:
-        return 0.0
-
-    return float(
-        math_expressions_equal(
-            prediction,
-            target,
+    try:
+        return float(
+            grade_answer(
+                given_answer=prediction_text,
+                ground_truth=target_text,
+            )
         )
-    )
 
+    except Exception as error:
+        print(
+            "[math500_reward_func] Failed to score: "
+            f"prediction={prediction_text!r}, "
+            f"target={target_text!r}, "
+            f"error={type(error).__name__}: {error}",
+            flush=True,
+        )
+
+        return 0.0
+    
 
 def get_fen(metadata: dict[str, Any], extra_info: dict[str, Any]) -> str:
     for source in (metadata, extra_info):
@@ -1174,6 +912,7 @@ def cleanup_distributed() -> None:
     if dist.is_available() and dist.is_initialized():
         dist.destroy_process_group()
 
+
 @torch.no_grad()
 def eval_mean_reward(
     model: torch.nn.Module,
@@ -1183,25 +922,166 @@ def eval_mean_reward(
     max_new_tokens: int,
     task: str,
     batch_size: int = 8,
-) -> float:
+    group_size: int = 4,
+    temperature: float = 1.0,
+    top_p: float = 1.0,
+) -> tuple[
+    float,
+    float,
+    float,
+    list[dict[str, Any]],
+]:
+    """Evaluate mean reward and two different standard-error estimates.
+
+    For each prompt, generate ``group_size`` completions.
+
+    Reward matrix:
+
+        scores.shape == (num_prompts, group_size)
+
+    Mean reward:
+
+        mean_reward = scores.mean()
+
+    Method 1 -- generation-level standard error:
+
+        generation_means = scores.mean(dim=0)
+
+        std_error_generation =
+            generation_means.std(unbiased=True)
+            / sqrt(group_size)
+
+    This is the original method.
+
+    Method 2 -- prompt-level standard deviation RMS:
+
+        prompt_stds = scores.std(dim=1, unbiased=True)
+
+        std_error_prompt_rms =
+            prompt_stds.square().mean().sqrt()
+
+    This is equivalent to:
+
+        scores.std(dim=1).square().mean().sqrt()
+
+    Importantly, Method 2 is computed using sufficient statistics
+    (sum of rewards and sum of squared rewards) and therefore does
+    NOT require gathering the entire reward matrix across ranks.
+
+    Returns:
+        (
+            global_mean_reward,
+            std_error_generation,
+            std_error_prompt_rms,
+            global_generation_records,
+        )
+    """
+
+    if group_size < 1:
+        raise ValueError(
+            f"group_size must be positive, got {group_size}"
+        )
+
+    if group_size > 1 and temperature <= 0:
+        raise ValueError(
+            "temperature must be positive when group_size > 1"
+        )
+
     rank = get_rank()
     world_size = get_world_size()
 
-    local_data = data[rank::world_size]
+    # ------------------------------------------------------------------
+    # Assign prompts to ranks.
+    # ------------------------------------------------------------------
 
-    local_reward_sum = 0.0
-    local_reward_count = 0
+    local_indexed_data = list(
+        enumerate(data)
+    )[rank::world_size]
 
-    for start in range(0, len(local_data), batch_size):
-        batch = local_data[start : start + batch_size]
+    local_data = [
+        example
+        for _, example in local_indexed_data
+    ]
+
+    local_data_indices = [
+        data_index
+        for data_index, _ in local_indexed_data
+    ]
+
+    # ------------------------------------------------------------------
+    # We still keep generation records because rank 0 needs to save
+    # completion-level information to CSV.
+    #
+    # We DO NOT gather local_prompt_reward_rows anymore.
+    # This avoids all_gather_object() and its CUDA memory overhead.
+    # ------------------------------------------------------------------
+
+    local_generation_records: list[
+        dict[str, Any]
+    ] = []
+
+    # ------------------------------------------------------------------
+    # Sufficient statistics for Method 2.
+    #
+    # For every prompt i:
+    #
+    #   sum_i  = sum_j scores[i, j]
+    #   sqsum_i = sum_j scores[i, j]^2
+    #
+    # Then:
+    #
+    #   sample_variance_i =
+    #       (sqsum_i - sum_i^2 / G) / (G - 1)
+    #
+    # We only need the sum of sample_variance_i over prompts.
+    # ------------------------------------------------------------------
+
+    local_prompt_variance_sum = 0.0
+    local_prompt_count = 0
+
+    # ------------------------------------------------------------------
+    # Method 1 statistics.
+    #
+    # We need the reward sum for each generation position:
+    #
+    #   generation_reward_sums[j]
+    #
+    # and the total number of prompts.
+    # ------------------------------------------------------------------
+
+    local_generation_reward_sums = torch.zeros(
+        group_size,
+        dtype=torch.float64,
+        device=model.device,
+    )
+
+    debug_prompt_count = 0
+
+    # ------------------------------------------------------------------
+    # Generation loop.
+    # ------------------------------------------------------------------
+
+    for start in range(
+        0,
+        len(local_data),
+        batch_size,
+    ):
+        prompt_batch = local_data[
+            start : start + batch_size
+        ]
+
+        # --------------------------------------------------------------
+        # Build prompts.
+        # --------------------------------------------------------------
 
         if task == "chess":
-            texts = [
+            prompt_texts = [
                 example["prompt"]
-                for example in batch
+                for example in prompt_batch
             ]
+
         else:
-            texts = [
+            prompt_texts = [
                 tokenizer.apply_chat_template(
                     [
                         {
@@ -1213,35 +1093,154 @@ def eval_mean_reward(
                     add_generation_prompt=True,
                     enable_thinking=False,
                 )
-                for example in batch
+                for example in prompt_batch
             ]
 
-        inputs = encode_batch_left_padded(tokenizer, texts, model.device)
+        # --------------------------------------------------------------
+        # Repeat each prompt group_size times.
+        #
+        # Example group_size=4:
+        #
+        #   prompt_0 x4
+        #   prompt_1 x4
+        #   prompt_2 x4
+        # --------------------------------------------------------------
 
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
-            use_cache=True,
+        expanded_texts: list[str] = []
+        expanded_examples: list[
+            dict[str, Any]
+        ] = []
+        expanded_group_indices: list[int] = []
+
+        for prompt_index, (
+            text,
+            example,
+        ) in enumerate(
+            zip(
+                prompt_texts,
+                prompt_batch,
+            )
+        ):
+            for group_index in range(
+                group_size
+            ):
+                expanded_texts.append(text)
+                expanded_examples.append(example)
+                expanded_group_indices.append(
+                    group_index
+                )
+
+        # --------------------------------------------------------------
+        # Tokenize.
+        # --------------------------------------------------------------
+
+        inputs = encode_batch_left_padded(
+            tokenizer,
+            expanded_texts,
+            model.device,
         )
 
-        input_width = inputs["input_ids"].shape[1]
+        # --------------------------------------------------------------
+        # Generation.
+        # --------------------------------------------------------------
 
-        for i, example in enumerate(batch):
-            raw_generated_ids = outputs[i, input_width:]
+        generation_kwargs: dict[str, Any] = {
+            "max_new_tokens": max_new_tokens,
+            "pad_token_id": tokenizer.pad_token_id,
+            "eos_token_id": tokenizer.eos_token_id,
+            "use_cache": True,
+        }
+
+        if group_size > 1:
+            generation_kwargs.update(
+                {
+                    "do_sample": True,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                }
+            )
+        else:
+            generation_kwargs["do_sample"] = False
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        outputs = model.generate(
+            **inputs,
+            **generation_kwargs,
+        )
+
+        input_width = inputs[
+            "input_ids"
+        ].shape[1]
+
+        # --------------------------------------------------------------
+        # Reward matrix for this batch:
+        #
+        #   (num_prompts_in_batch, group_size)
+        #
+        # This is small and lives only for the current batch.
+        # --------------------------------------------------------------
+
+        batch_reward_scores = torch.zeros(
+            (
+                len(prompt_batch),
+                group_size,
+            ),
+            dtype=torch.float64,
+        )
+
+        # --------------------------------------------------------------
+        # Decode and score every generation.
+        # --------------------------------------------------------------
+
+        for expanded_index, example in enumerate(
+            expanded_examples
+        ):
+            prompt_index = (
+                expanded_index // group_size
+            )
+
+            group_index = (
+                expanded_group_indices[
+                    expanded_index
+                ]
+            )
+
+            raw_generated_ids = outputs[
+                expanded_index,
+                input_width:,
+            ]
+
+            # ----------------------------------------------------------
+            # Remove EOS from decoded completion.
+            # ----------------------------------------------------------
 
             eos_positions = (
-                raw_generated_ids == tokenizer.eos_token_id
-            ).nonzero(as_tuple=True)[0]
+                raw_generated_ids
+                == tokenizer.eos_token_id
+            ).nonzero(
+                as_tuple=True
+            )[0]
 
             if len(eos_positions) > 0:
-                eos_position = int(eos_positions[0].item())
-                generated_ids = raw_generated_ids[:eos_position]
+                eos_position = int(
+                    eos_positions[0].item()
+                )
+
+                generated_ids = (
+                    raw_generated_ids[
+                        :eos_position
+                    ]
+                )
+
                 ended_with_eos = True
+
             else:
-                generated_ids = raw_generated_ids
+                generated_ids = (
+                    raw_generated_ids
+                )
+
                 ended_with_eos = False
 
             completion = tokenizer.decode(
@@ -1249,127 +1248,449 @@ def eval_mean_reward(
                 skip_special_tokens=True,
             )
 
+            # ----------------------------------------------------------
+            # Global prompt index.
+            # ----------------------------------------------------------
+
+            global_prompt_index = (
+                local_data_indices[
+                    start + prompt_index
+                ]
+            )
+
+            # ----------------------------------------------------------
+            # Completion statistics.
+            # ----------------------------------------------------------
+
+            completion_token_length = int(
+                generated_ids.numel()
+            )
+
+            raw_completion_token_length = int(
+                raw_generated_ids.numel()
+            )
+
+            likely_truncated = (
+                not ended_with_eos
+                and raw_completion_token_length
+                >= max_new_tokens
+            )
+
+            # ----------------------------------------------------------
+            # Reward.
+            # ----------------------------------------------------------
+
             reward = reward_fn(
                 completion,
                 example["answer"],
-                metadata=example.get("metadata"),
-                extra_info=example.get("extra_info"),
+                metadata=example.get(
+                    "metadata"
+                ),
+                extra_info=example.get(
+                    "extra_info"
+                ),
             )
 
-            if rank == 0 and local_reward_count < 3:
-                likely_truncated = (
-                    not ended_with_eos
-                    and len(raw_generated_ids) >= max_new_tokens
+            reward_value = float(reward)
+
+            # ----------------------------------------------------------
+            # Store reward.
+            # ----------------------------------------------------------
+
+            batch_reward_scores[
+                prompt_index,
+                group_index,
+            ] = reward_value
+
+            # ----------------------------------------------------------
+            # Save generation-level record.
+            # ----------------------------------------------------------
+
+            local_generation_records.append(
+                {
+                    "prompt_index": (
+                        global_prompt_index
+                    ),
+                    "group_index": (
+                        group_index
+                    ),
+                    "group_sample": (
+                        group_index + 1
+                    ),
+                    "completion_tokens": (
+                        completion_token_length
+                    ),
+                    "raw_completion_tokens": (
+                        raw_completion_token_length
+                    ),
+                    "completion_characters": (
+                        len(completion)
+                    ),
+                    "ended_with_eos": (
+                        ended_with_eos
+                    ),
+                    "likely_truncated": (
+                        likely_truncated
+                    ),
+                    "reward": reward_value,
+                }
+            )
+
+            # ----------------------------------------------------------
+            # Debug output.
+            # ----------------------------------------------------------
+
+            if (
+                rank == 0
+                and debug_prompt_count
+                + prompt_index
+                < 3
+            ):
+                print(
+                    "\n" + "=" * 100
                 )
 
-                print("\n" + "=" * 100)
-                print(f"Example index: {local_reward_count}")
-                print(f"Generated tokens: {len(generated_ids)}")
-                print(f"Ended with EOS: {ended_with_eos}")
-                print(f"Likely truncated: {likely_truncated}")
+                print(
+                    "Prompt index: "
+                    f"{debug_prompt_count + prompt_index}"
+                )
+
+                print(
+                    "Group sample: "
+                    f"{group_index + 1}/{group_size}"
+                )
+
+                print(
+                    "Generated tokens: "
+                    f"{len(generated_ids)}"
+                )
+
+                print(
+                    "Ended with EOS: "
+                    f"{ended_with_eos}"
+                )
+
+                print(
+                    "Likely truncated: "
+                    f"{likely_truncated}"
+                )
+
+                # ------------------------------------------------------
+                # Task-specific debug information.
+                # ------------------------------------------------------
 
                 if task == "chess":
-                    metadata = example.get("metadata") or {}
-                    extra_info = example.get("extra_info") or {}
-
-                    fen = get_fen(metadata, extra_info)
-                    raw_move, follows_format = extract_chess_single_turn_move(
-                        completion
+                    metadata = (
+                        example.get(
+                            "metadata"
+                        )
+                        or {}
                     )
-                    predicted_uci = chess_single_turn_move_to_uci(raw_move)
-                    target_move = parse_chess_ground_truth(example["answer"])
 
-                    print(f"Contains </T>: {'</T>' in completion}")
-                    print(f"Follows <T></T> format: {follows_format}")
-                    print(f"Raw extracted move: {raw_move!r}")
-                    print(f"Predicted UCI: {predicted_uci!r}")
-                    print(f"Target move: {target_move!r}")
-                    print(f"Ground truth: {example['answer']!r}")
+                    extra_info = (
+                        example.get(
+                            "extra_info"
+                        )
+                        or {}
+                    )
+
+                    fen = get_fen(
+                        metadata,
+                        extra_info,
+                    )
+
+                    (
+                        raw_move,
+                        follows_format,
+                    ) = (
+                        extract_chess_single_turn_move(
+                            completion
+                        )
+                    )
+
+                    predicted_uci = (
+                        chess_single_turn_move_to_uci(
+                            raw_move
+                        )
+                    )
+
+                    target_move = (
+                        parse_chess_ground_truth(
+                            example["answer"]
+                        )
+                    )
+
+                    print(
+                        "Contains </T>: "
+                        f"{'</T>' in completion}"
+                    )
+
+                    print(
+                        "Follows <T></T> format: "
+                        f"{follows_format}"
+                    )
+
+                    print(
+                        "Raw extracted move: "
+                        f"{raw_move!r}"
+                    )
+
+                    print(
+                        "Predicted UCI: "
+                        f"{predicted_uci!r}"
+                    )
+
+                    print(
+                        "Target move: "
+                        f"{target_move!r}"
+                    )
+
                     print(
                         "First move legality: "
                         f"{check_move_legality(fen, predicted_uci)}"
                     )
-                    print(f"FEN: {fen}")
+
+                    print(
+                        f"FEN: {fen}"
+                    )
 
                 elif task == "gsm8k":
-                    prediction = extract_final_answer(
-                        completion
-                    )
-                    target = extract_ground_truth(
-                        example["answer"]
-                    )
-
-                    contains_final = bool(
-                        re.search(
-                            r"Final\s+Answer",
-                            completion,
-                            re.IGNORECASE,
+                    prediction = (
+                        extract_final_answer(
+                            completion
                         )
                     )
-                    contains_boxed = bool(
-                        re.search(r"\\boxed\s*\{", completion)
+
+                    target = (
+                        extract_ground_truth(
+                            example["answer"]
+                        )
                     )
 
-                    print(f"Contains final answer: {contains_final}")
-                    print(f"Contains boxed answer: {contains_boxed}")
-                    print(f"Extracted answer: {prediction!r}")
-                    print(f"Ground truth: {target!r}")
+                    print(
+                        "Extracted answer: "
+                        f"{prediction!r}"
+                    )
+
+                    print(
+                        "Ground truth: "
+                        f"{target!r}"
+                    )
 
                 elif task == "math500":
-                    prediction_text = extract_math500_answer(
-                        completion
-                    )
-                    target_text = str(
-                        example["answer"]
-                    ).strip()
-
-                    prediction_expr = parse_math_expression(
-                        prediction_text
-                    )
-                    target_expr = parse_math_expression(
-                        target_text
+                    (
+                        prediction_text,
+                        extraction_method,
+                    ) = (
+                        extract_math500_answer(
+                            completion
+                        )
                     )
 
-                    metadata = example.get("metadata") or {}
-
-                    print(
-                        f"Extracted answer: {prediction_text!r}"
-                    )
-                    print(
-                        f"Ground truth: {target_text!r}"
-                    )
-                    print(
-                        f"Parsed prediction: {prediction_expr!r}"
-                    )
-                    print(
-                        f"Parsed target: {target_expr!r}"
-                    )
-                    print(
-                        f"Subject: {metadata.get('subject')!r}"
-                    )
-                    print(
-                        f"Level: {metadata.get('level')!r}"
-                    )
-                    print(
-                        f"Unique ID: {metadata.get('unique_id')!r}"
+                    target_text = (
+                        extract_math500_gold(
+                            example["answer"]
+                        )
                     )
 
-                print(f"Reward: {reward}")
-                print("-" * 100)
-                print("FULL GENERATION:")
+                    try:
+                        grader_result = (
+                            bool(
+                                prediction_text
+                            )
+                            and bool(
+                                target_text
+                            )
+                            and grade_answer(
+                                given_answer=(
+                                    prediction_text
+                                ),
+                                ground_truth=(
+                                    target_text
+                                ),
+                            )
+                        )
+
+                    except Exception as error:
+                        grader_result = False
+
+                        print(
+                            "Grader error: "
+                            f"{type(error).__name__}: "
+                            f"{error}"
+                        )
+
+                    print(
+                        "Extraction method: "
+                        f"{extraction_method}"
+                    )
+
+                    print(
+                        "Extracted answer: "
+                        f"{prediction_text!r}"
+                    )
+
+                    print(
+                        "Ground truth: "
+                        f"{target_text!r}"
+                    )
+
+                    print(
+                        "PRM800K grader result: "
+                        f"{grader_result}"
+                    )
+
+                print(
+                    f"Reward: {reward_value}"
+                )
+
+                print(
+                    "-" * 100
+                )
+
+                print(
+                    "FULL GENERATION:"
+                )
+
                 print(completion)
-                print("=" * 100, flush=True)
 
-            local_reward_sum += float(reward)
-            local_reward_count += 1
+                print(
+                    "=" * 100,
+                    flush=True,
+                )
 
-    stats = torch.tensor(
-        [
-            local_reward_sum,
-            float(local_reward_count),
-        ],
+        # --------------------------------------------------------------
+        # Accumulate Method 1 statistics.
+        #
+        # Sum reward for each generation position.
+        #
+        # shape:
+        #   (group_size,)
+        # --------------------------------------------------------------
+
+        batch_generation_reward_sums = (
+            batch_reward_scores.sum(
+                dim=0
+            )
+        )
+
+        local_generation_reward_sums += (
+            batch_generation_reward_sums.to(
+                device=model.device
+            )
+        )
+
+        # --------------------------------------------------------------
+        # Accumulate Method 2 statistics.
+        #
+        # For every prompt:
+        #
+        #   mean_i = sum_i / G
+        #
+        #   sample_var_i =
+        #       (sum(x^2) - sum(x)^2 / G)
+        #       / (G - 1)
+        #
+        # Then:
+        #
+        #   Method 2 =
+        #       sqrt(mean_i(sample_var_i))
+        #
+        # We only accumulate the sum of sample variances.
+        # --------------------------------------------------------------
+
+        if group_size >= 2:
+            batch_prompt_reward_sums = (
+                batch_reward_scores.sum(
+                    dim=1
+                )
+            )
+
+            batch_prompt_reward_squared_sums = (
+                batch_reward_scores.square().sum(
+                    dim=1
+                )
+            )
+
+            batch_prompt_variances = (
+                batch_prompt_reward_squared_sums
+                - (
+                    batch_prompt_reward_sums.square()
+                    / group_size
+                )
+            ) / (group_size - 1)
+
+            # Numerical safety.
+            batch_prompt_variances = (
+                batch_prompt_variances.clamp(
+                    min=0.0
+                )
+            )
+
+            local_prompt_variance_sum += (
+                batch_prompt_variances.sum().item()
+            )
+
+        local_prompt_count += len(
+            prompt_batch
+        )
+
+        debug_prompt_count += len(
+            prompt_batch
+        )
+
+        # --------------------------------------------------------------
+        # Explicitly release temporary generation tensors before the
+        # next batch. This is particularly useful for large models.
+        # --------------------------------------------------------------
+
+        del outputs
+        del inputs
+        del batch_reward_scores
+
+    # ==================================================================
+    # Distributed reduction.
+    # ==================================================================
+
+    local_prompt_count_tensor = torch.tensor(
+        float(local_prompt_count),
         dtype=torch.float64,
         device=model.device,
+    )
+
+    local_prompt_variance_sum_tensor = (
+        torch.tensor(
+            float(
+                local_prompt_variance_sum
+            ),
+            dtype=torch.float64,
+            device=model.device,
+        )
+    )
+
+    # --------------------------------------------------------------
+    # Combine all statistics into one tiny tensor.
+    #
+    # First group_size entries:
+    #     generation reward sums
+    #
+    # Entry group_size:
+    #     prompt count
+    #
+    # Entry group_size + 1:
+    #     sum of prompt-level sample variances
+    # --------------------------------------------------------------
+
+    stats = torch.cat(
+        [
+            local_generation_reward_sums,
+            local_prompt_count_tensor.unsqueeze(
+                0
+            ),
+            local_prompt_variance_sum_tensor.unsqueeze(
+                0
+            ),
+        ]
     )
 
     if is_distributed():
@@ -1378,13 +1699,176 @@ def eval_mean_reward(
             op=dist.ReduceOp.SUM,
         )
 
-    global_reward_sum = stats[0].item()
-    global_reward_count = int(stats[1].item())
+    # ==================================================================
+    # Recover global statistics.
+    # ==================================================================
 
-    if global_reward_count == 0:
-        return float("nan")
+    global_generation_reward_sums = (
+        stats[:group_size]
+    )
 
-    return global_reward_sum / global_reward_count
+    global_prompt_count = stats[
+        group_size
+    ].item()
+
+    global_prompt_variance_sum = stats[
+        group_size + 1
+    ].item()
+
+    if global_prompt_count == 0:
+        mean_reward = float("nan")
+        std_error_generation = float("nan")
+        std_error_prompt_rms = float("nan")
+
+    else:
+        # ==============================================================
+        # Mean reward.
+        # ==============================================================
+
+        generation_means = (
+            global_generation_reward_sums
+            / global_prompt_count
+        )
+
+        mean_reward = (
+            generation_means.mean().item()
+        )
+
+        # ==============================================================
+        # Method 1:
+        #
+        # Original generation-level standard error.
+        #
+        # generation_means.shape == (group_size,)
+        #
+        # std_error =
+        #     std(generation_means) / sqrt(group_size)
+        # ==============================================================
+
+        if group_size < 2:
+            std_error_generation = 0.0
+
+        else:
+            std_error_generation = (
+                generation_means.std(
+                    unbiased=True
+                )
+                / np.sqrt(group_size)
+            ).item()
+
+        # ==============================================================
+        # Method 2:
+        #
+        # scores.shape:
+        #
+        #     (num_prompts, group_size)
+        #
+        # For each prompt:
+        #
+        #     prompt_std_i =
+        #         scores[i].std(unbiased=True)
+        #
+        # Then:
+        #
+        #     sqrt(
+        #         mean(prompt_std_i^2)
+        #     )
+        #
+        # We computed the numerator using sufficient statistics,
+        # so no reward matrix needs to be gathered across GPUs.
+        # ==============================================================
+
+        if group_size < 2:
+            std_error_prompt_rms = 0.0
+
+        else:
+            mean_prompt_variance = (
+                global_prompt_variance_sum
+                / global_prompt_count
+            )
+
+            # Numerical safety.
+            mean_prompt_variance = max(
+                0.0,
+                mean_prompt_variance,
+            )
+
+            std_error_prompt_rms = (
+                mean_prompt_variance ** 0.5
+            )
+
+    # ==================================================================
+    # Gather generation records.
+    #
+    # This is still needed for the completion CSV.
+    #
+    # Unlike reward scores, these records contain strings and therefore
+    # cannot be efficiently reduced with a normal all_reduce.
+    #
+    # If this itself causes memory problems for very large generation
+    # outputs, it can also be moved to CPU/Gloo, but for your current
+    # completion-length records this should be small.
+    # ==================================================================
+
+    # if is_distributed():
+    #     gathered_generation_records: list[
+    #         list[dict[str, Any]] | None
+    #     ] = [
+    #         None
+    #         for _ in range(world_size)
+    #     ]
+
+    #     dist.all_gather_object(
+    #         gathered_generation_records,
+    #         local_generation_records,
+    #     )
+
+    #     if rank == 0:
+    #         global_generation_records = [
+    #             record
+    #             for rank_records
+    #             in gathered_generation_records
+    #             if rank_records is not None
+    #             for record in rank_records
+    #         ]
+
+    #         global_generation_records.sort(
+    #             key=lambda record: (
+    #                 record[
+    #                     "prompt_index"
+    #                 ],
+    #                 record[
+    #                     "group_index"
+    #                 ],
+    #             )
+    #         )
+
+    #     else:
+    #         global_generation_records = []
+
+    # else:
+    #     global_generation_records = (
+    #         local_generation_records
+    #     )
+
+    #     global_generation_records.sort(
+    #         key=lambda record: (
+    #             record[
+    #                 "prompt_index"
+    #             ],
+    #             record[
+    #                 "group_index"
+    #             ],
+    #         )
+    #     )
+
+    return (
+        mean_reward,
+        std_error_generation,
+        std_error_prompt_rms,
+        local_generation_records,
+    )
+
 
 
 def infer_checkpoint_step(model_ckpt: str) -> str:
@@ -1403,44 +1887,212 @@ def build_output_stem(args: argparse.Namespace) -> str:
     return (
         f"{args.rl_type}_{args.dataset}_reward_line_"
         f"scale{args.scale}_alpha_range{args.alpha_range}_"
-        f"num{args.num_samples}_ckpt{checkpoint_step}_"
-        f"model_{args.model_name}_max_new{args.max_new_tokens}_bs{args.batch_size}_"
-        f"seed{args.seed}_pts{args.num_points}_{args.num_directions}dirs"
+        f"num{args.num_samples}_group{args.group_size}_"
+        f"ckpt{checkpoint_step}_"
+        f"model_{args.model_name}_"
+        f"max_new{args.max_new_tokens}_"
+        f"bs{args.batch_size}_"
+        f"temp{args.temperature}_"
+        f"topp{args.top_p}_"
+        f"seed{args.seed}_pts{args.num_points}_"
+        f"{args.num_directions}dirs"
     )
 
 
-def save_results(df: pd.DataFrame, args: argparse.Namespace) -> tuple[Path, Path]:
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+def save_results(
+    df: pd.DataFrame,
+    args: argparse.Namespace,
+) -> tuple[Path, Path, Path]:
+
+    output_dir = Path(
+        args.output_dir
+    )
+
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
     stem = build_output_stem(args)
-    csv_path = output_dir / f"{stem}.csv"
-    png_path = output_dir / f"{stem}.png"
-    df.to_csv(csv_path, index=False)
 
-    plt.figure(figsize=(8, 5))
-    for direction_name, subset in df.groupby("direction"):
-        subset = subset.sort_values("perturbation_coefficient")
-        plt.plot(
-            subset["perturbation_coefficient"],
-            subset["reward"],
-            marker="o",
-            linewidth=2,
-            label=direction_name,
-        )
-    plt.xlabel("Perturbation coefficient")
-    plt.ylabel("Mean reward")
-    plt.title(
-        f"{args.rl_type.upper()} {args.dataset} step {args.checkpoint_step} reward landscape"
+    csv_path = (
+        output_dir / f"{stem}.csv"
     )
-    plt.ylim(args.ymin, args.ymax)
-    plt.minorticks_on()
-    plt.grid(which="major", linestyle="--", linewidth=0.5, alpha=0.8)
-    plt.grid(which="minor", linestyle=":", linewidth=0.3, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(png_path, dpi=300)
-    plt.close()
-    return csv_path, png_path
+
+    generation_mean_png_path = (
+        output_dir
+        / f"{stem}_generation_mean.png"
+    )
+
+    prompt_rms_png_path = (
+        output_dir
+        / f"{stem}_prompt_rms.png"
+    )
+
+    # ============================================================
+    # Save CSV
+    # ============================================================
+
+    df.to_csv(
+        csv_path,
+        index=False,
+    )
+
+    # ============================================================
+    # Generic plotting function
+    # ============================================================
+
+    def plot_landscape(
+        std_column: str,
+        png_path: Path,
+        title_suffix: str,
+    ) -> None:
+
+        plt.figure(
+            figsize=(8, 5)
+        )
+
+        for (
+            direction_name,
+            subset,
+        ) in df.groupby(
+            "direction"
+        ):
+
+            subset = subset.sort_values(
+                "perturbation_coefficient"
+            )
+
+            x = subset[
+                "perturbation_coefficient"
+            ].to_numpy()
+
+            mean_reward = subset[
+                "reward"
+            ].to_numpy()
+
+            std_error = subset[
+                std_column
+            ].to_numpy()
+
+            line = plt.plot(
+                x,
+                mean_reward,
+                marker="o",
+                linewidth=2,
+                label=direction_name,
+            )[0]
+
+            lower_bound = np.clip(
+                mean_reward - std_error,
+                0.0,
+                1.0,
+            )
+
+            upper_bound = np.clip(
+                mean_reward + std_error,
+                0.0,
+                1.0,
+            )
+
+            plt.fill_between(
+                x,
+                lower_bound,
+                upper_bound,
+                alpha=0.2,
+                color=line.get_color(),
+            )
+
+        plt.xlabel(
+            "Perturbation coefficient"
+        )
+
+        plt.ylabel(
+            "Mean reward"
+        )
+
+        plt.title(
+            f"{args.rl_type.upper()} "
+            f"{args.dataset} "
+            f"step {args.checkpoint_step} "
+            f"reward landscape "
+            f"({title_suffix})"
+        )
+
+        plt.ylim(
+            args.ymin,
+            args.ymax,
+        )
+
+        plt.minorticks_on()
+
+        plt.grid(
+            which="major",
+            linestyle="--",
+            linewidth=0.5,
+            alpha=0.8,
+        )
+
+        plt.grid(
+            which="minor",
+            linestyle=":",
+            linewidth=0.3,
+            alpha=0.3,
+        )
+
+        plt.legend()
+        plt.tight_layout()
+
+        plt.savefig(
+            png_path,
+            dpi=300,
+        )
+
+        plt.close()
+
+    # ============================================================
+    # Figure 1
+    #
+    # Method 1:
+    # std(generation_means) / sqrt(group_size)
+    # ============================================================
+
+    plot_landscape(
+        std_column=(
+            "std_error_generation_mean"
+        ),
+        png_path=(
+            generation_mean_png_path
+        ),
+        title_suffix=(
+            "generation-mean SE"
+        ),
+    )
+
+    # ============================================================
+    # Figure 2
+    #
+    # Method 2:
+    # sqrt(mean(prompt_std^2))
+    # ============================================================
+
+    plot_landscape(
+        std_column=(
+            "std_error_prompt_rms"
+        ),
+        png_path=(
+            prompt_rms_png_path
+        ),
+        title_suffix=(
+            "prompt-level RMS std"
+        ),
+    )
+
+    return (
+        csv_path,
+        generation_mean_png_path,
+        prompt_rms_png_path,
+    )
 
 
 def set_seed(seed: int) -> None:
@@ -1493,11 +2145,14 @@ def main() -> None:
 
     set_seed(args.seed)
 
-    grid = np.linspace(
-        -args.alpha_range,
-        args.alpha_range,
-        args.num_points,
-    )
+    if args.num_points == 1:
+        grid = np.array([0.0], dtype=float)
+    else:
+        grid = np.linspace(
+            -args.alpha_range,
+            args.alpha_range,
+            args.num_points,
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_ckpt,
@@ -1515,7 +2170,9 @@ def main() -> None:
         torch_dtype=torch.bfloat16,
         trust_remote_code=True,
         low_cpu_mem_usage=True,
+        # attn_implementation="flash_attention_2",
     ).to(device)
+
 
     model.eval()
 
@@ -1554,6 +2211,7 @@ def main() -> None:
 
 
     rows: list[dict[str, float | str]] = []
+    generation_rows: list[dict[str, Any]] = []
 
     try:
         for direction_index in range(
@@ -1577,7 +2235,12 @@ def main() -> None:
                     coefficient=coefficient,
                 )
 
-                reward = eval_mean_reward(
+                (
+                    reward,
+                    std_error_generation_mean,
+                    std_error_prompt_rms,
+                    generation_records,
+                ) = eval_mean_reward(
                     model=model,
                     tokenizer=tokenizer,
                     data=data,
@@ -1585,6 +2248,9 @@ def main() -> None:
                     max_new_tokens=args.max_new_tokens,
                     task=resolved_task,
                     batch_size=args.batch_size,
+                    group_size=args.group_size,
+                    temperature=args.temperature,
+                    top_p=args.top_p,
                 )
 
                 if rank == 0:
@@ -1594,14 +2260,33 @@ def main() -> None:
                             "alpha": float(alpha),
                             "perturbation_coefficient": coefficient,
                             "reward": reward,
+                            "std_error_generation_mean": (
+                                std_error_generation_mean
+                            ),
+                            "std_error_prompt_rms": (
+                                std_error_prompt_rms
+                            ),
                         }
                     )
+                    for record in generation_records:
+                        generation_rows.append(
+                            {
+                                "direction": direction_name,
+                                "alpha": float(alpha),
+                                "perturbation_coefficient": coefficient,
+                                **record,
+                            }
+                        )
 
                     print(
                         f"direction={direction_name}, "
                         f"alpha={alpha:.4f}, "
                         f"coefficient={coefficient:.6f}, "
-                        f"reward={reward:.4f}",
+                        f"reward={reward:.4f}, "
+                        f"std_generation_mean="
+                        f"{std_error_generation_mean:.6f}, "
+                        f"std_prompt_rms="
+                        f"{std_error_prompt_rms:.6f}",
                         flush=True,
                     )
 
@@ -1613,12 +2298,43 @@ def main() -> None:
         dist.barrier()
 
     if rank == 0:
-        csv_path, png_path = save_results(
+        (
+            csv_path,
+            generation_mean_png_path,
+            prompt_rms_png_path,
+        ) = save_results(
             pd.DataFrame(rows),
             args,
         )
+
+        generation_csv_path = (
+            Path(args.output_dir)
+            / (
+                f"completion_lengths_{build_output_stem(args)}"
+                ".csv"
+            )
+        )
+
+        generation_df = pd.DataFrame(
+            generation_rows
+        ).sort_values(
+            [
+                "direction",
+                "alpha",
+                "prompt_index",
+                "group_index",
+            ]
+        )
+
+        generation_df.to_csv(
+            generation_csv_path,
+            index=False,
+        )
         print(
-            f"Saved {csv_path} and {png_path}",
+            f"Saved {csv_path}, "
+            f"{generation_mean_png_path}, "
+            f"{prompt_rms_png_path}, "
+            f"and {generation_csv_path}",
             flush=True,
         )
 
