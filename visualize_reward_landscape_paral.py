@@ -32,6 +32,13 @@ def parse_args() -> argparse.Namespace:
         help="Number of sampled generations per prompt",
     )
     parser.add_argument(
+        "--direction-path",
+        type=str,
+        default=None,
+        help="Path to a saved parameter update direction (.pt). "
+            "If provided, use this direction instead of random directions.",
+    )
+    parser.add_argument(
         "--temperature",
         type=float,
         default=1.0,
@@ -830,21 +837,37 @@ def load_target_state(
 
 
 def load_perturbed_state(
-    model: torch.nn.Module,
-    theta: dict[str, torch.Tensor],
-    direction: dict[str, torch.Tensor],
-    coefficient: float,
-) -> None:
-    """Set model parameters to theta + coefficient * direction in place."""
+    model,
+    theta,
+    direction,
+    coefficient,
+):
     with torch.no_grad():
         for name, parameter in model.named_parameters():
-            if name in theta:
-                parameter.copy_(theta[name])
-                parameter.add_(
-                    direction[name],
-                    alpha=coefficient,
-                )
+            parameter.copy_(theta[name])
 
+            d = direction[name].to(
+                device=parameter.device,
+                dtype=parameter.dtype,
+            )
+
+            parameter.add_(coefficient * d)
+
+def load_direction(
+    path: str,
+    device: torch.device,
+) -> dict[str, torch.Tensor]:
+    data = torch.load(path, map_location="cpu")
+
+    if isinstance(data, dict) and "direction" in data:
+        direction = data["direction"]
+    else:
+        direction = data
+
+    return {
+        name: value.to(device)
+        for name, value in direction.items()
+    }
 
 def random_direction_like(
     state: dict[str, torch.Tensor],
@@ -2218,8 +2241,15 @@ def main() -> None:
             1,
             args.num_directions + 1,
         ):
-            direction = random_direction_like(theta)
-            direction_name = f"direction_{direction_index}"
+            if args.direction_path is not None:
+                direction = load_direction(
+                    args.direction_path,
+                    device=device,
+                )
+                direction_name = Path(args.direction_path).stem
+            else:
+                direction = random_direction_like(theta)
+                direction_name = f"direction_{direction_index}"
 
             for alpha in tqdm(
                 grid,
@@ -2268,6 +2298,7 @@ def main() -> None:
                             ),
                         }
                     )
+
                     for record in generation_records:
                         generation_rows.append(
                             {
@@ -2291,6 +2322,7 @@ def main() -> None:
                     )
 
             del direction
+
     finally:
         load_target_state(model, theta)
 
