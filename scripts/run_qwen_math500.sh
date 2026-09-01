@@ -4,8 +4,8 @@ set -euo pipefail
 # bash scripts/run_qwen_math500.sh
 
 # ===== Math500 experiment settings =====
-GPUS="0,1,2,3"
-NUM_GPUS=4
+GPUS="1,2,3"
+NUM_GPUS=3
 MASTER_PORT=29502
 # PYTHON_SCRIPT="visualize_reward_landscape.py"
 PYTHON_SCRIPT="visualize_reward_landscape_paral.py"
@@ -13,8 +13,10 @@ PYTHON_SCRIPT="visualize_reward_landscape_paral.py"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_1.7b_grpo_math500_train300_test200_max512_full/v3-20260805-223143/checkpoint-10"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_1.7b_grpo_math500_train300_test200_max512_full/v0-20260805-180507/checkpoint-225"
 
-MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_base_nonthink_grpo_math500_lr_5e-6_max1024/v1-20260809-141301/checkpoint-25"  
-# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_base_nonthink_grpo_math500_lr_5e-6_max1024/v2-20260809-160437/checkpoint-250"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_base_nonthink_grpo_math500_lr_5e-6_max1024/v1-20260809-141301/checkpoint-25"  
+MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_base_nonthink_grpo_math500_lr_5e-6_max1024/v1-20260809-141301/checkpoint-148"  
+
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_base_nonthink_grpo_math500_lr_5e-6_max1024/v2-20260809-160437/checkpoint-275"
 # MODEL_CKPT="/tmp/erin/Qwen3-0.6B-Base"
 # MODEL_CKPT="/mnt/sj/home/yichen/ms-swift/output_qwen3_1.7b_grpo_gsm8k_full/v1-20260625-011426/checkpoint-600"
 # MODEL_CKPT="/mnt/sj/home/yichen/ms-swift/output_qwen3_1.7b_grpo_gsm8k_full/v1-20260625-011426/checkpoint-600"
@@ -27,9 +29,9 @@ TASK="math500"
 RL_TYPE="grpo"
 DATASET="math500"
 MODEL_NAME="qwen3_0.6b"
-CHECKPOINT_STEP=25
+CHECKPOINT_STEP=148
 
-NUM_SAMPLES=300
+NUM_SAMPLES=80
 BATCH_SIZE=22
 LR="5e-6"
 MAX_NEW_TOKENS=1024
@@ -42,7 +44,9 @@ GROUP_SIZE=4
 TMP=1.0
 TOP_P=1.0
 
-NUM_DIRECTIONS=2
+DIR_PATH="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_base_nonthink_grpo_math500_lr_5e-6_max1024/direction_148_to_150.pt"
+
+NUM_DIRECTIONS=1
 YMIN=0.0
 YMAX=1.0
 OUTPUT_DIR="figs_math500_grpo_new"
@@ -78,6 +82,7 @@ nohup env CUDA_VISIBLE_DEVICES="${GPUS}" \
     --scale "${SCALE}" \
     --alpha-range "${ALPHA_RANGE}" \
     --num-points "${NUM_POINTS}" \
+    --direction-path "${DIR_PATH}" \
     --num-directions "${NUM_DIRECTIONS}" \
     --output-dir "${OUTPUT_DIR}" \
     --ymin "${YMIN}" \

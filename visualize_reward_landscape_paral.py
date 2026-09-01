@@ -1062,6 +1062,10 @@ def eval_mean_reward(
     local_prompt_variance_sum = 0.0
     local_prompt_count = 0
 
+    local_reward_sum = 0.0
+    local_reward_squared_sum = 0.0
+    local_reward_count = 0
+
     # ------------------------------------------------------------------
     # Method 1 statistics.
     #
@@ -1212,6 +1216,9 @@ def eval_mean_reward(
             ),
             dtype=torch.float64,
         )
+
+
+        
 
         # --------------------------------------------------------------
         # Decode and score every generation.
@@ -1591,10 +1598,28 @@ def eval_mean_reward(
         #   (group_size,)
         # --------------------------------------------------------------
 
+
+
         batch_generation_reward_sums = (
             batch_reward_scores.sum(
                 dim=0
             )
+        )
+
+        # --------------------------------------------------------------
+        # Accumulate global reward statistics for debugging.
+        # --------------------------------------------------------------
+
+        local_reward_sum += (
+            batch_reward_scores.sum().item()
+        )
+
+        local_reward_squared_sum += (
+            batch_reward_scores.square().sum().item()
+        )
+
+        local_reward_count += (
+            batch_reward_scores.numel()
         )
 
         local_generation_reward_sums += (
@@ -1681,6 +1706,25 @@ def eval_mean_reward(
         device=model.device,
     )
 
+
+    local_reward_sum_tensor = torch.tensor(
+        local_reward_sum,
+        dtype=torch.float64,
+        device=model.device,
+    )
+
+    local_reward_squared_sum_tensor = torch.tensor(
+        local_reward_squared_sum,
+        dtype=torch.float64,
+        device=model.device,
+    )
+
+    local_reward_count_tensor = torch.tensor(
+        float(local_reward_count),
+        dtype=torch.float64,
+        device=model.device,
+    )
+
     local_prompt_variance_sum_tensor = (
         torch.tensor(
             float(
@@ -1707,12 +1751,16 @@ def eval_mean_reward(
     stats = torch.cat(
         [
             local_generation_reward_sums,
-            local_prompt_count_tensor.unsqueeze(
-                0
-            ),
-            local_prompt_variance_sum_tensor.unsqueeze(
-                0
-            ),
+
+            local_prompt_count_tensor.unsqueeze(0),
+
+            local_prompt_variance_sum_tensor.unsqueeze(0),
+
+            local_reward_sum_tensor.unsqueeze(0),
+
+            local_reward_squared_sum_tensor.unsqueeze(0),
+
+            local_reward_count_tensor.unsqueeze(0),
         ]
     )
 
@@ -1737,6 +1785,48 @@ def eval_mean_reward(
     global_prompt_variance_sum = stats[
         group_size + 1
     ].item()
+
+    global_reward_sum = stats[
+        group_size + 2
+    ].item()
+
+    global_reward_squared_sum = stats[
+        group_size + 3
+    ].item()
+
+    global_reward_count = stats[
+        group_size + 4
+    ].item()
+
+
+    if global_reward_count < 2:
+        std = 0.0
+        se = 0.0
+    else:
+        # Sample variance:
+        #
+        # Var = [sum(x^2) - sum(x)^2 / N] / (N - 1)
+        #
+        global_reward_variance = (
+            global_reward_squared_sum
+            - (
+                global_reward_sum ** 2
+                / global_reward_count
+            )
+        ) / (global_reward_count - 1)
+
+        # Numerical safety.
+        global_reward_variance = max(
+            0.0,
+            global_reward_variance,
+        )
+
+        std = global_reward_variance ** 0.5
+
+        se = (
+            std
+            / np.sqrt(global_reward_count)
+        )
 
     if global_prompt_count == 0:
         mean_reward = float("nan")
@@ -1778,6 +1868,10 @@ def eval_mean_reward(
                 )
                 / np.sqrt(group_size)
             ).item()
+
+        generation_mean_std = generation_means.std(
+            unbiased=True
+        ).item()
 
         # ==============================================================
         # Method 2:
@@ -1887,8 +1981,11 @@ def eval_mean_reward(
 
     return (
         mean_reward,
+        generation_mean_std,
         std_error_generation,
         std_error_prompt_rms,
+        std,
+        se,
         local_generation_records,
     )
 
@@ -1925,8 +2022,7 @@ def build_output_stem(args: argparse.Namespace) -> str:
 def save_results(
     df: pd.DataFrame,
     args: argparse.Namespace,
-) -> tuple[Path, Path, Path]:
-
+) -> tuple[Path, ...]:
     output_dir = Path(
         args.output_dir
     )
@@ -1942,9 +2038,24 @@ def save_results(
         output_dir / f"{stem}.csv"
     )
 
-    generation_mean_png_path = (
+    generation_mean_std_png_path = (
         output_dir
-        / f"{stem}_generation_mean.png"
+        / f"{stem}_generation_mean_std.png"
+    )
+
+    generation_mean_se_png_path = (
+        output_dir
+        / f"{stem}_generation_mean_se.png"
+    )
+
+    reward_std_png_path = (
+        output_dir
+        / f"{stem}_reward_std.png"
+    )
+
+    reward_se_png_path = (
+        output_dir
+        / f"{stem}_reward_se.png"
     )
 
     prompt_rms_png_path = (
@@ -2076,44 +2187,74 @@ def save_results(
     # ============================================================
     # Figure 1
     #
-    # Method 1:
-    # std(generation_means) / sqrt(group_size)
+    # Method 1 raw standard deviation:
+    # std(generation_means)
     # ============================================================
 
     plot_landscape(
-        std_column=(
-            "std_error_generation_mean"
-        ),
-        png_path=(
-            generation_mean_png_path
-        ),
-        title_suffix=(
-            "generation-mean SE"
-        ),
+        std_column="generation_mean_std",
+        png_path=generation_mean_std_png_path,
+        title_suffix="generation-mean std",
     )
 
     # ============================================================
     # Figure 2
+    #
+    # Method 1 standard error:
+    # std(generation_means) / sqrt(group_size)
+    # ============================================================
+
+    plot_landscape(
+        std_column="std_error_generation_mean",
+        png_path=generation_mean_se_png_path,
+        title_suffix="generation-mean SE",
+    )
+
+
+    # ============================================================
+    # Figure 3
+    #
+    # Raw reward standard deviation
+    # ============================================================
+
+    plot_landscape(
+        std_column="std",
+        png_path=reward_std_png_path,
+        title_suffix="reward std",
+    )
+
+    # ============================================================
+    # Figure 4
+    #
+    # Naive standard error:
+    # reward std / sqrt(num_prompts * group_size)
+    # ============================================================
+
+    plot_landscape(
+        std_column="se",
+        png_path=reward_se_png_path,
+        title_suffix="reward SE",
+    )
+
+    # ============================================================
+    # Figure 5
     #
     # Method 2:
     # sqrt(mean(prompt_std^2))
     # ============================================================
 
     plot_landscape(
-        std_column=(
-            "std_error_prompt_rms"
-        ),
-        png_path=(
-            prompt_rms_png_path
-        ),
-        title_suffix=(
-            "prompt-level RMS std"
-        ),
+        std_column="std_error_prompt_rms",
+        png_path=prompt_rms_png_path,
+        title_suffix="prompt-level RMS std",
     )
 
     return (
         csv_path,
-        generation_mean_png_path,
+        generation_mean_std_png_path,
+        generation_mean_se_png_path,
+        reward_std_png_path,
+        reward_se_png_path,
         prompt_rms_png_path,
     )
 
@@ -2267,8 +2408,11 @@ def main() -> None:
 
                 (
                     reward,
+                    generation_mean_std,
                     std_error_generation_mean,
                     std_error_prompt_rms,
+                    std,
+                    se,
                     generation_records,
                 ) = eval_mean_reward(
                     model=model,
@@ -2290,8 +2434,18 @@ def main() -> None:
                             "alpha": float(alpha),
                             "perturbation_coefficient": coefficient,
                             "reward": reward,
+                            "generation_mean_std": (
+                                generation_mean_std
+                            ),
+                            
                             "std_error_generation_mean": (
                                 std_error_generation_mean
+                            ),
+                            "std": (
+                                std
+                            ),
+                            "se": (
+                                se
                             ),
                             "std_error_prompt_rms": (
                                 std_error_prompt_rms
@@ -2332,7 +2486,10 @@ def main() -> None:
     if rank == 0:
         (
             csv_path,
-            generation_mean_png_path,
+            generation_mean_std_png_path,
+            generation_mean_se_png_path,
+            reward_std_png_path,
+            reward_se_png_path,
             prompt_rms_png_path,
         ) = save_results(
             pd.DataFrame(rows),
@@ -2362,13 +2519,13 @@ def main() -> None:
             generation_csv_path,
             index=False,
         )
-        print(
-            f"Saved {csv_path}, "
-            f"{generation_mean_png_path}, "
-            f"{prompt_rms_png_path}, "
-            f"and {generation_csv_path}",
-            flush=True,
-        )
+        # print(
+        #     f"Saved {csv_path}, "
+        #     f"{generation_mean_png_path}, "
+        #     f"{prompt_rms_png_path}, "
+        #     f"and {generation_csv_path}",
+        #     flush=True,
+        # )
 
     cleanup_distributed()
 
