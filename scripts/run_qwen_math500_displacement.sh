@@ -1,31 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export OMP_NUM_THREADS=1
+export VLLM_LOGGING_LEVEL=DEBUG
+export NCCL_DEBUG=INFO
+export NCCL_SOCKET_FAMILY=AF_INET
+
 # bash scripts/run_qwen_math500_displacement.sh
 
 # ============================================================
 # GPU settings
 # ============================================================
 
-export VLLM_ALLOW_INSECURE_SERIALIZATION=2
+export VLLM_ALLOW_INSECURE_SERIALIZATION=1
 
 # IMPORTANT:
 # Python script is configured for 2-GPU vLLM TP=2
-GPU="5,6"
+GPU="6"
 
-PYTHON_SCRIPT="visualize_reward_landscape_sgd.py"
+PYTHON_SCRIPT="visualize_reward_landscape_displace.py"
+# PYTHON_SCRIPT="visualize_reward_landscape_displace_multigpu.py"
 
 # ============================================================
 # Model
 # ============================================================
 
-MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v18-20260903-125040/checkpoint-49"
-DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/param_displace/displacement_49_to_50.pt"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-75"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v18-20260903-125040/checkpoint-49"
+MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-119"
+
+# DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/param_displace/displacement_49_to_50.pt"
+DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/param_displace/displacement_lr_3e-6_119_to_120.pt"
 
 EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train.jsonl"
 
 MODEL_NAME="qwen3_0.6b"
-CHECKPOINT_STEP=49
+CHECKPOINT_STEP=119
+DIR_STEP=120
 
 TASK="math500"
 
@@ -33,7 +44,7 @@ TASK="math500"
 # Evaluation
 # ============================================================
 
-NUM_SAMPLES=300
+NUM_SAMPLES=100
 
 MAX_NEW_TOKENS=2048
 
@@ -44,7 +55,7 @@ SEED=42
 # ============================================================
 
 PG_NUM_PROMPTS=16
-GROUP_SIZE=1
+GROUP_SIZE=4
 
 # Sampling parameters
 TEMPERATURE=0.7
@@ -64,10 +75,10 @@ DIRECTION_TYPE="displacement"
 
 SCALE=0.01
 ALPHA_RANGE=20
-ALPHA_LEFT=100
-ALPHA_RIGHT=100
+ALPHA_LEFT=70000
+ALPHA_RIGHT=70000
 
-NUM_POINTS=31
+NUM_POINTS=21
 
 # ============================================================
 # vLLM
@@ -94,7 +105,7 @@ RUN_NAME="${DIRECTION_TYPE}"\
 "_dir${NUM_DIRECTIONS}"\
 "_scale${SCALE}_left${ALPHA_LEFT}_right${ALPHA_RIGHT}"\
 "_prompts${PG_NUM_PROMPTS}_group${GROUP_SIZE}"\
-"_ckpt${CHECKPOINT_STEP}"\
+"_ckpt${CHECKPOINT_STEP}_to${DIR_STEP}"\
 "_max_new${MAX_NEW_TOKENS}"\
 "_temp${TEMPERATURE}_topp${TOP_P}_topk${TOP_K}"\
 "_pts${NUM_POINTS}_seed${SEED}"\
@@ -151,13 +162,14 @@ echo "=========================================="
 
 nohup env \
   CUDA_VISIBLE_DEVICES="${GPU}" \
-  python "${PYTHON_SCRIPT}" \
+  python -u "${PYTHON_SCRIPT}" \
     --model-ckpt "${MODEL_CKPT}" \
     --eval-json "${EVAL_JSON}" \
     --model-name "${MODEL_NAME}" \
     --task "${TASK}" \
     --direction-path "${DIRECTION_PATH}" \
     --checkpoint-step "${CHECKPOINT_STEP}" \
+    --dir-step "${DIR_STEP}" \
     \
     --tensor-parallel-size "${TENSOR_PARALLEL_SIZE}" \
     --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \

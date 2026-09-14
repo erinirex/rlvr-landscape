@@ -7,14 +7,20 @@ set -euo pipefail
 # GPU settings
 # ============================================================
 export VLLM_ALLOW_INSECURE_SERIALIZATION=1
-GPU="1"
+GPU="2"
 PYTHON_SCRIPT="visualize_reward_landscape_vllm.py"
 
 # ============================================================
 # Model
 # ============================================================
 
-MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train100_lr_5e-6_max8192/v1-20260821-105102/checkpoint-100"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train100_lr_5e-6_max8192/v1-20260821-105102/checkpoint-100"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-275"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-75"
+MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-50"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-117"
+
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v18-20260903-125040/checkpoint-49"
 
 EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train.jsonl"
 
@@ -22,7 +28,11 @@ TASK="math500"
 RL_TYPE="grpo"
 DATASET="math500"
 MODEL_NAME="qwen3_0.6b"
-CHECKPOINT_STEP=100
+LR="3e-6"
+# CHECKPOINT_STEP=275
+CHECKPOINT_STEP=50
+# CHECKPOINT_STEP=117
+
 
 # ============================================================
 # Evaluation
@@ -30,7 +40,7 @@ CHECKPOINT_STEP=100
 
 NUM_SAMPLES=100
 
-MAX_NEW_TOKENS=8192
+MAX_NEW_TOKENS=2048
 
 SEED=42
 
@@ -45,7 +55,7 @@ TOP_K=20
 # Random directions
 # ============================================================
 
-NUM_DIRECTIONS=2
+NUM_DIRECTIONS=4
 
 # ============================================================
 # Landscape
@@ -53,13 +63,13 @@ NUM_DIRECTIONS=2
 
 SCALE=0.01
 ALPHA_RANGE=12
-NUM_POINTS=15
+NUM_POINTS=21
 
 # ============================================================
 # vLLM settings
 # ============================================================
 
-GPU_MEMORY_UTILIZATION=0.85
+GPU_MEMORY_UTILIZATION=0.5
 MAX_NUM_SEQS=8
 MAX_MODEL_LEN=16384
 
@@ -68,13 +78,14 @@ MAX_MODEL_LEN=16384
 # ============================================================
 
 YMIN=0.0
-YMAX=1.0
+YMAX=1.1
 
-OUTPUT_DIR="figs_math500_grpo_random_vllm"
+OUTPUT_DIR="figs_math500_grpo_random_lr_${LR}_vllm"
 
 RUN_NAME="${RL_TYPE}_${DATASET}_${MODEL_NAME}"\
 "_random${NUM_DIRECTIONS}"\
 "_scale${SCALE}_alpha${ALPHA_RANGE}"\
+"_lr${LR}"\
 "_data${NUM_SAMPLES}_group${GROUP_SIZE}"\
 "_ckpt${CHECKPOINT_STEP}"\
 "_max_new${MAX_NEW_TOKENS}"\
@@ -83,7 +94,7 @@ RUN_NAME="${RL_TYPE}_${DATASET}_${MODEL_NAME}"\
 "_gpu${GPU}"\
 "_vllm"
 
-LOG_DIR="logs_math500_grpo_random_vllm"
+LOG_DIR="logs_math500_grpo_random_lr_${LR}_vllm"
 
 mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}"
 
@@ -125,6 +136,7 @@ nohup env \
     --model-ckpt "${MODEL_CKPT}" \
     --eval-json "${EVAL_JSON}" \
     --task "${TASK}" \
+    --lr "${LR}" \
     --rl-type "${RL_TYPE}" \
     --dataset "${DATASET}" \
     --model-name "${MODEL_NAME}" \

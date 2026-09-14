@@ -7,11 +7,11 @@ set -euo pipefail
 # GPU settings
 # ============================================================
 
-export VLLM_ALLOW_INSECURE_SERIALIZATION=2
+export VLLM_ALLOW_INSECURE_SERIALIZATION=1
 
 # IMPORTANT:
 # Python script is configured for 2-GPU vLLM TP=2
-GPU="0"
+GPU="7"
 
 PYTHON_SCRIPT="visualize_reward_landscape_sgd.py"
 
@@ -19,12 +19,14 @@ PYTHON_SCRIPT="visualize_reward_landscape_sgd.py"
 # Model
 # ============================================================
 
-MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v2-20260902-234342/checkpoint-100"
-
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v2-20260902-234342/checkpoint-100"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-75"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-275"
+MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-120"
 EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train.jsonl"
 
 MODEL_NAME="qwen3_0.6b"
-CHECKPOINT_STEP=100
+CHECKPOINT_STEP=120
 
 TASK="math500"
 
@@ -55,19 +57,19 @@ TOP_K=20
 # ============================================================
 
 NUM_DIRECTIONS=1
-DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/figs_math500_grpo_sgd/directions/qwen3_0.6b_step100_grpo_direction_0.pt"
+# DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/figs_math500_grpo_sgd/directions/qwen3_0.6b_step100_grpo_direction_0.pt"
+DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions/qwen3_0.6b_step120_sgd_raw_direction_0.pt"
 DIRECTION_TYPE="grpo-grad"
 
 # ============================================================
 # Landscape
 # ============================================================
 
-SCALE=0.01
-ALPHA_RANGE=20
-ALPHA_LEFT=1
-ALPHA_RIGHT=100
+SCALE=0.0010
+ALPHA_LEFT=700
+ALPHA_RIGHT=700
 
-NUM_POINTS=2
+NUM_POINTS=21
 
 # ============================================================
 # vLLM
@@ -75,7 +77,7 @@ NUM_POINTS=2
 
 TENSOR_PARALLEL_SIZE=1
 
-GPU_MEMORY_UTILIZATION=0.2
+GPU_MEMORY_UTILIZATION=0.8
 
 MAX_MODEL_LEN=16384
 
@@ -91,7 +93,6 @@ LOG_DIR="logs_math500_grpo_sgd"
 
 RUN_NAME="${DIRECTION_TYPE}"\
 "_${MODEL_NAME}"\
-"_random${NUM_DIRECTIONS}"\
 "_scale${SCALE}_left${ALPHA_LEFT}_right${ALPHA_RIGHT}"\
 "_prompts${PG_NUM_PROMPTS}_group${GROUP_SIZE}"\
 "_ckpt${CHECKPOINT_STEP}"\

@@ -558,8 +558,6 @@ def create_vllm(args):
         # Required because we mutate model parameters.
         enforce_eager=True,
 
-        enable_prefix_caching=False,
-
         seed=args.seed,
     )
 
@@ -822,8 +820,6 @@ def vllm_eval_reward(
         generation_records,
     )
 
-
-
 # ============================================================
 # Parameter state
 # ============================================================
@@ -894,294 +890,6 @@ def scale_to_state_norm(
         for name, tensor
         in direction.items()
     }
-
-
-# ============================================================
-# HF log probabilities
-# ============================================================
-
-def compute_response_log_probs(
-    model,
-    prompt_token_ids,
-    completion_token_ids,
-):
-
-    input_ids = (
-        prompt_token_ids
-        +
-        completion_token_ids
-    )
-
-    device = next(
-        model.parameters()
-    ).device
-
-    input_tensor = torch.tensor(
-        input_ids,
-        dtype=torch.long,
-        device=device,
-    ).unsqueeze(0)
-
-    attention_mask = torch.ones_like(
-        input_tensor
-    )
-
-    outputs = model(
-        input_ids=input_tensor,
-        attention_mask=attention_mask,
-    )
-
-    logits = outputs.logits
-
-    shift_logits = logits[:, :-1, :]
-
-    shift_labels = input_tensor[:, 1:]
-
-    log_probs = torch.log_softmax(
-        shift_logits,
-        dim=-1,
-    )
-
-    token_log_probs = (
-        log_probs
-        .gather(
-            dim=-1,
-            index=shift_labels.unsqueeze(-1),
-        )
-        .squeeze(-1)
-    )
-
-    prompt_len = len(
-        prompt_token_ids
-    )
-
-    completion_len = len(
-        completion_token_ids
-    )
-
-    if completion_len == 0:
-
-        return token_log_probs.new_empty(
-            (0,)
-        )
-
-    start = prompt_len - 1
-
-    end = (
-        start
-        + completion_len
-    )
-
-    response_log_probs = (
-        token_log_probs[
-            0,
-            start:end
-        ]
-    )
-
-    return response_log_probs
-
-
-# ============================================================
-# GRPO gradient
-# ============================================================
-
-def compute_grpo_gradient(
-    model,
-    rollout,
-    args,
-):
-
-    model.zero_grad(
-        set_to_none=True
-    )
-
-    print()
-    print("=" * 80)
-    print("Computing GRPO gradient")
-    print("=" * 80)
-
-    # --------------------------------------------------------
-    # Count total completion tokens
-    # --------------------------------------------------------
-
-    total_tokens = 0
-
-    for item in rollout:
-
-        completion_len = len(
-            item["completion_token_ids"]
-        )
-
-        if completion_len > 0:
-
-            total_tokens += completion_len
-
-    if total_tokens == 0:
-
-        raise RuntimeError(
-            "No valid completion tokens."
-        )
-
-    print(
-        "Total completion tokens:",
-        total_tokens,
-    )
-
-    # --------------------------------------------------------
-    # One response at a time
-    # --------------------------------------------------------
-
-    total_loss_value = 0.0
-
-    for item in tqdm(
-        rollout,
-        desc="GRPO backward",
-    ):
-
-        advantage = float(
-            item["advantage"]
-        )
-
-        log_probs = (
-            compute_response_log_probs(
-                model,
-                item["prompt_token_ids"],
-                item["completion_token_ids"],
-            )
-        )
-
-        if log_probs.numel() == 0:
-            continue
-
-        loss_i = -(
-            advantage
-            * log_probs
-        ).sum()
-
-        # IMPORTANT:
-        #
-        # Preserve:
-        #
-        #   total_loss / total_tokens
-        #
-        loss_i = (
-            loss_i
-            / total_tokens
-        )
-
-        loss_i.backward()
-
-        total_loss_value += float(
-            loss_i.detach().cpu()
-        )
-
-        del log_probs
-        del loss_i
-
-    print(
-        "GRPO loss:",
-        total_loss_value,
-    )
-
-    # --------------------------------------------------------
-    # Collect gradient
-    # --------------------------------------------------------
-
-    gradient = {}
-
-    for name, param in (
-        model.named_parameters()
-    ):
-
-        if not param.requires_grad:
-            continue
-
-        if param.grad is None:
-
-            gradient[name] = (
-                torch.zeros_like(
-                    param.detach(),
-                    dtype=torch.float32,
-                    device="cpu",
-                )
-            )
-
-        else:
-
-            gradient[name] = (
-                param.grad
-                .detach()
-                .float()
-                .cpu()
-                .clone()
-            )
-
-    grad_norm = global_norm(
-        gradient
-    )
-
-    print(
-        "GRPO gradient norm:",
-        grad_norm,
-    )
-
-    if grad_norm < 1e-12:
-
-        raise RuntimeError(
-            "GRPO gradient norm is ~0."
-        )
-
-    # --------------------------------------------------------
-    # SGD direction
-    #
-    # Gradient descent:
-    #
-    #   d = -g
-    #
-    # --------------------------------------------------------
-
-    direction_unit = {
-        name:
-            -g / grad_norm
-        for name, g in gradient.items()
-    }
-
-    # --------------------------------------------------------
-    # Scale direction to ||theta||
-    # --------------------------------------------------------
-
-    theta_state = get_target_state(
-        model
-    )
-
-    theta_norm = global_norm(
-        theta_state
-    )
-
-    print(
-        "Theta norm:",
-        theta_norm,
-    )
-
-    direction = (
-        scale_to_state_norm(
-            direction_unit,
-            theta_norm,
-        )
-    )
-
-    print(
-        "Direction norm:",
-        global_norm(direction),
-    )
-
-    # Free gradient memory
-    model.zero_grad(
-        set_to_none=True
-    )
-
-    return direction
 
 
 # ============================================================
@@ -1369,224 +1077,245 @@ def cleanup_cuda():
 # vLLM direction loading
 # ============================================================
 
+def install_direction_on_vllm(
+    llm,
+    direction_path,
+):
+    """
+    IMPORTANT:
 
-def install_direction_on_vllm(llm, direction_path):
-    direction_path = str(Path(direction_path).resolve())
+    The driver does NOT send the direction tensor
+    through apply_model().
 
-    if not Path(direction_path).is_file():
-        raise FileNotFoundError(direction_path)
+    Instead, apply_model() only sends the path.
 
-    def worker_install(model):
-        # 重新安装前必须先恢复原点。
-        old_coefficient = getattr(
-            model, "_reward_landscape_coefficient", 0.0
+    Inside the vLLM worker:
+
+        torch.load(direction_path)
+
+    loads the direction from disk into CPU memory.
+
+    This avoids serializing a potentially ~2.4 GB
+    direction through the vLLM RPC mechanism.
+    """
+
+    direction_path = str(
+        Path(direction_path).resolve()
+    )
+
+    print()
+    print("=" * 80)
+    print(
+        "Installing direction from file"
+    )
+    print("=" * 80)
+
+    print(
+        "Direction file:",
+        direction_path,
+    )
+
+    if not os.path.exists(
+        direction_path
+    ):
+
+        raise FileNotFoundError(
+            f"Direction file does not exist: "
+            f"{direction_path}"
         )
-        if old_coefficient != 0.0:
-            raise RuntimeError(
-                "Restore coefficient=0 before installing a new direction."
-            )
 
-        hf_direction = torch.load(
+    # --------------------------------------------------------
+    # Only a string is captured by this closure.
+    # --------------------------------------------------------
+
+    def worker_install(
+        model,
+    ):
+
+        print(
+            "[vLLM worker] "
+            f"Loading direction from "
+            f"{direction_path}",
+            flush=True,
+        )
+
+        direction = torch.load(
             direction_path,
             map_location="cpu",
             weights_only=True,
         )
 
-        if not isinstance(hf_direction, dict):
-            raise TypeError("Direction file must contain a dictionary.")
+        if not isinstance(
+            direction,
+            dict,
+        ):
 
-        params = dict(model.named_parameters())
-        mapped_direction = {}
-        consumed = set()
-
-        for name, param in params.items():
-            if param.dtype not in (
-                torch.float32,
-                torch.float16,
-                torch.bfloat16,
-            ):
-                raise RuntimeError(
-                    f"Unsupported parameter dtype: {name}: {param.dtype}"
-                )
-
-            # HF -> vLLM 融合参数映射。
-            if ".qkv_proj." in name:
-                source_names = [
-                    name.replace(".qkv_proj.", ".q_proj."),
-                    name.replace(".qkv_proj.", ".k_proj."),
-                    name.replace(".qkv_proj.", ".v_proj."),
-                ]
-            elif ".gate_up_proj." in name:
-                source_names = [
-                    name.replace(".gate_up_proj.", ".gate_proj."),
-                    name.replace(".gate_up_proj.", ".up_proj."),
-                ]
-            else:
-                source_names = [name]
-
-            missing = [
-                source_name
-                for source_name in source_names
-                if source_name not in hf_direction
-            ]
-            if missing:
-                raise RuntimeError(
-                    f"Cannot map vLLM parameter {name}.\n"
-                    f"Missing HF directions: {missing}"
-                )
-
-            parts = []
-            for source_name in source_names:
-                tensor = hf_direction[source_name]
-
-                if not isinstance(tensor, torch.Tensor):
-                    raise TypeError(
-                        f"{source_name}: direction must be a tensor."
-                    )
-
-                tensor = tensor.detach().to(
-                    device="cpu",
-                    dtype=torch.float32,
-                )
-
-                if not torch.isfinite(tensor).all().item():
-                    raise RuntimeError(
-                        f"{source_name}: direction contains NaN/Inf."
-                    )
-
-                parts.append(tensor)
-
-            # 单 GPU、非量化 Qwen3 的融合权重沿输出维拼接。
-            if len(parts) == 1:
-                mapped = parts[0]
-            else:
-                mapped = torch.cat(parts, dim=0)
-
-            if mapped.shape != param.shape:
-                raise RuntimeError(
-                    f"Shape mismatch for {name}: "
-                    f"mapped={tuple(mapped.shape)}, "
-                    f"vLLM={tuple(param.shape)}"
-                )
-
-            mapped_direction[name] = mapped.contiguous()
-            consumed.update(source_names)
-
-        # 防止 HF 方向中有参数被静默丢弃。
-        unused = sorted(set(hf_direction) - consumed)
-        if unused:
             raise RuntimeError(
-                "Some HF directions were not used. "
-                "Check architecture or tied-weight handling:\n"
-                + "\n".join(unused)
+                "Direction file must contain "
+                "a dictionary."
             )
 
-        # 只在首次安装时保存原点。
-        base_state = getattr(
-            model, "_reward_landscape_base_state", None
+        # ----------------------------------------------------
+        # Store CPU direction in worker.
+        #
+        # Single GPU means only one worker.
+        # ----------------------------------------------------
+
+        model._reward_landscape_direction = (
+            direction
         )
 
-        if base_state is None:
-            base_state = {
-                name: param.detach().to(
-                    device="cpu",
-                    dtype=torch.float32,
-                ).clone()
-                for name, param in params.items()
-            }
-        else:
-            if set(base_state) != set(params):
-                raise RuntimeError("Saved base parameter names differ.")
-
-            for name, param in params.items():
-                if base_state[name].shape != param.shape:
-                    raise RuntimeError(
-                        f"Saved base shape differs for {name}."
-                    )
-
-        # 完整检查成功后，再安装方向。
-        model._reward_landscape_base_state = base_state
-        model._reward_landscape_direction = mapped_direction
-        model._reward_landscape_direction_path = direction_path
-        model._reward_landscape_coefficient = 0.0
-
-        return {
-            "hf_tensors_used": len(consumed),
-            "vllm_tensors_mapped": len(mapped_direction),
-            "vllm_tensors_total": len(params),
-        }
-
-    results = llm.apply_model(worker_install)
-    print("Direction installed:", results)
-    return results
-
-
-def set_vllm_coefficient(llm, coefficient):
-    coefficient = float(coefficient)
-
-    if not math.isfinite(coefficient):
-        raise ValueError("coefficient must be finite.")
-
-    def worker_set_coefficient(model):
-        direction = getattr(
-            model, "_reward_landscape_direction", None
-        )
-        base_state = getattr(
-            model, "_reward_landscape_base_state", None
+        model._reward_landscape_direction_path = (
+            direction_path
         )
 
-        if direction is None or base_state is None:
-            raise RuntimeError("Install the direction first.")
+        model._reward_landscape_coefficient = (
+            0.0
+        )
 
-        params = dict(model.named_parameters())
+        return len(
+            direction
+        )
 
-        if set(params) != set(direction) or set(params) != set(base_state):
-            raise RuntimeError("Incomplete parameter mapping.")
+    results = llm.apply_model(
+        worker_install
+    )
 
-        with torch.no_grad():
-            for name, param in params.items():
-                base = base_state[name]
+    print(
+        "Direction loaded by worker.",
+        results,
+    )
 
-                if coefficient == 0.0:
-                    # 从保存的原始权重直接恢复。
-                    updated = base
-                else:
-                    # CPU FP32 计算，每次都从原点构造。
-                    updated = torch.add(
-                        base,
-                        direction[name],
-                        alpha=coefficient,
-                    )
 
-                if not torch.isfinite(updated).all().item():
-                    raise RuntimeError(
-                        f"Non-finite updated weight: {name}"
-                    )
+# ============================================================
+# Set vLLM coefficient
+# ============================================================
 
-                # 最后才转换为模型精度。
-                device_weight = updated.to(
-                    device=param.device,
-                    dtype=param.dtype,
+def set_vllm_coefficient(
+    llm,
+    coefficient,
+):
+    """
+    Current model:
+
+        theta =
+            theta_ckpt
+            + coefficient * direction
+
+    We update incrementally:
+
+        delta =
+            new_coefficient
+            - old_coefficient
+
+        theta <- theta + delta * direction
+    """
+
+    coefficient = float(
+        coefficient
+    )
+
+    def worker_set_coefficient(
+        model,
+    ):
+
+        old = getattr(
+            model,
+            "_reward_landscape_coefficient",
+            0.0,
+        )
+
+        delta = (
+            coefficient
+            - old
+        )
+
+        if abs(delta) > 0:
+
+            direction = getattr(
+                model,
+                "_reward_landscape_direction",
+                None,
+            )
+
+            if direction is None:
+
+                raise RuntimeError(
+                    "Direction has not been "
+                    "loaded into this vLLM worker."
                 )
 
-                if not torch.isfinite(device_weight).all().item():
-                    raise RuntimeError(
-                        f"Weight overflow after dtype conversion: {name}"
+            with torch.no_grad():
+
+                matched = 0
+
+                for name, param in (
+                    model.named_parameters()
+                ):
+
+                    if name not in direction:
+                        continue
+
+                    d = direction[name]
+
+                    if tuple(
+                        d.shape
+                    ) != tuple(
+                        param.shape
+                    ):
+
+                        raise RuntimeError(
+                            "Shape mismatch for "
+                            f"{name}: "
+                            f"direction={d.shape}, "
+                            f"parameter={param.shape}"
+                        )
+
+                    # ------------------------------------------------
+                    # CPU -> GPU only during this update.
+                    #
+                    # d itself remains stored on CPU.
+                    # ------------------------------------------------
+
+                    d_device = d.to(
+                        device=param.device,
+                        dtype=param.dtype,
                     )
 
-                param.copy_(device_weight)
+                    param.add_(
+                        d_device,
+                        alpha=delta,
+                    )
 
-                del device_weight
-                del updated
+                    matched += 1
 
-        model._reward_landscape_coefficient = coefficient
+                    del d_device
 
-        return {
-            "coefficient": coefficient,
-            "updated_parameters": len(params),
-        }
+                if matched == 0:
 
-    return llm.apply_model(worker_set_coefficient)
+                    raise RuntimeError(
+                        "No parameters matched "
+                        "between direction file "
+                        "and vLLM model."
+                    )
+
+            # --------------------------------------------------------
+            # Optional garbage collection on worker.
+            # --------------------------------------------------------
+
+            del direction
+
+        model._reward_landscape_coefficient = (
+            coefficient
+        )
+
+        return coefficient
+
+    results = llm.apply_model(
+        worker_set_coefficient
+    )
+
+    return results
 
 
 # ============================================================
@@ -1951,52 +1680,6 @@ def main():
     # Generate GRPO rollout
     # ========================================================
 
-    grpo_rollouts = []
-
-    if (
-        args.direction_type == "grpo-grad"
-        and args.direction_path is None
-    ):
-
-        llm = create_vllm(
-            args
-        )
-
-        try:
-
-            for direction_idx in range(
-                args.num_directions
-            ):
-
-                rollout = (
-                    vllm_grpo_rollout(
-                        llm,
-                        tokenizer,
-                        data,
-                        args,
-                        direction_idx,
-                    )
-                )
-
-                compute_group_advantages(
-                    rollout,
-                    args.group_size,
-                )
-
-                grpo_rollouts.append(
-                    rollout
-                )
-
-        finally:
-
-            print(
-                "Destroying vLLM "
-                "after rollout..."
-            )
-
-            del llm
-
-            cleanup_cuda()
 
     # ========================================================
     # PHASE 2
@@ -2009,7 +1692,7 @@ def main():
     directions = []
     direction_paths = []
 
-    if args.direction_type in ("grpo-grad", "displacement"):
+    if args.direction_type in ("displacement"):
 
         # ========================================================
         # Existing direction: directly use it
@@ -2029,7 +1712,7 @@ def main():
 
             print()
             print("=" * 80)
-            print("Using existing SGD or displacement direction")
+            print("Using existing displacement direction")
             print("=" * 80)
             print(f"Direction path: {direction_path}")
 
@@ -2043,76 +1726,8 @@ def main():
 
         else:
 
-            hf_model = load_hf_model(args)
+            print("requires --direction-path for displacement direction type.")
 
-            theta_state = get_target_state(
-                hf_model
-            )
-
-            theta_norm = global_norm(
-                theta_state
-            )
-
-            print()
-            print(
-                "Checkpoint parameter norm:",
-                theta_norm,
-            )
-
-            for direction_idx, rollout in enumerate(
-                grpo_rollouts
-            ):
-
-                print()
-                print("=" * 80)
-
-                print(
-                    f"Computing SGD direction "
-                    f"{direction_idx + 1}/"
-                    f"{args.num_directions}"
-                )
-
-                print("=" * 80)
-
-                direction = compute_grpo_gradient(
-                    hf_model,
-                    rollout,
-                    args,
-                )
-
-                step_name = (
-                    f"step{args.checkpoint_step}"
-                    if args.checkpoint_step is not None
-                    else "checkpoint"
-                )
-
-                direction_path = (
-                    direction_dir
-                    / (
-                        f"{args.model_name}_"
-                        f"{step_name}_"
-                        f"grpo_direction_"
-                        f"{direction_idx}.pt"
-                    )
-                )
-
-                save_direction(
-                    direction,
-                    direction_path,
-                )
-
-                direction_paths.append(
-                    str(direction_path.resolve())
-                )
-
-                del direction
-
-                cleanup_cuda()
-
-            del theta_state
-            del hf_model
-
-            cleanup_cuda()
 
 
     # ========================================================
@@ -2417,7 +2032,7 @@ def main():
         if args.checkpoint_step is not None
         else "checkpoint"
     )
-    stem = f"{args.model_name}_{step_name}_to{args.dir_step}_{args.direction_type}_grp{args.group_size}_tmp{args.temperature}_scale{args.scale:.5f}_alpha{args.alpha_left}_{args.alpha_right}_npts{args.num_points}_seed{args.seed}"
+    stem = f"{args.model_name}_{step_name}_to{args.dir_step}_{args.direction_type}_grp{args.group_size}_tmp{args.temperature}_scale{args.scale:.2f}_alpha{args.alpha_left}_{args.alpha_right}_npts{args.num_points}_seed{args.seed}"
 
     csv_path = output_dir / f"{stem}.csv"
     generation_csv_path = output_dir / f"completion_lengths_{stem}.csv"
@@ -2528,7 +2143,7 @@ def main():
     # )
 
 
-    # # 不同 generation slot 的平均 reward 波动。
+    # 不同 generation slot 的平均 reward 波动。
     # plot_landscape(
     #     "generation_mean_std",
     #     f"{stem}_generation_mean_std.png",

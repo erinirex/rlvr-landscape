@@ -78,6 +78,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--lr",
+        type=float, 
+        default="5e-6"
+    )
+
+    parser.add_argument(
         "--dataset",
         default="chess_single_turn",
     )
@@ -230,8 +236,163 @@ def parse_args() -> argparse.Namespace:
 # ============================================================
 # Math / answer extraction
 # ============================================================
+DEFAULT_SUFFIX = (
+    "\nPlease reason step by step, and put your final answer within "
+    r"\boxed{}."
+)
 
-def extract_latex_command_argument(
+
+def extract_text_content(
+    content: Any,
+) -> str:
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+
+        return "\n".join(
+            str(item.get("text", ""))
+            for item in content
+            if (
+                isinstance(item, dict)
+                and item.get("type") == "text"
+            )
+        ).strip()
+
+    return str(content)
+
+
+def extract_prompt_from_messages(
+    messages: list[dict[str, Any]],
+) -> str:
+    """
+    Extract raw user problem only.
+
+    IMPORTANT:
+    DEFAULT_SUFFIX is NOT added here.
+    """
+
+    prompt_parts = []
+
+    for message in messages:
+
+        if not isinstance(message, dict):
+            continue
+
+        if message.get("role") != "user":
+            continue
+
+        text = extract_text_content(
+            message.get(
+                "content",
+                "",
+            )
+        )
+
+        if text:
+            prompt_parts.append(text)
+
+    return "\n".join(
+        prompt_parts
+    ).strip()
+
+
+def load_math500_example(
+    example: dict[str, Any],
+) -> dict[str, Any]:
+
+    if "messages" not in example:
+
+        raise KeyError(
+            "Math500 example is missing 'messages'"
+        )
+
+    if "solution" not in example:
+
+        raise KeyError(
+            "Math500 example is missing 'solution'"
+        )
+
+    # Raw math problem, without suffix.
+    prompt = extract_prompt_from_messages(
+        example["messages"]
+    )
+
+    answer = str(
+        example["solution"]
+    ).strip()
+
+    if not prompt:
+
+        raise ValueError(
+            "Math500 example has no user prompt"
+        )
+
+    if not answer:
+
+        raise ValueError(
+            "Math500 example has an empty solution"
+        )
+
+    return {
+        "prompt": prompt,
+        "answer": answer,
+        "metadata": example.get(
+            "metadata",
+            {},
+        ),
+        "extra_info": example.get(
+            "extra_info",
+            {},
+        ),
+    }
+
+
+def build_prompt_text(
+    tokenizer,
+    example,
+):
+    """
+    EXACTLY equivalent to format_prompt()
+    in eval_math500_displacement.py.
+    """
+
+    content = (
+        example["prompt"]
+        + DEFAULT_SUFFIX
+    )
+
+    return tokenizer.apply_chat_template(
+        [
+            {
+                "role": "user",
+                "content": content,
+            }
+        ],
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
+
+
+def extract_answer_tag(
+    text: str,
+) -> tuple[str, bool]:
+    """Extract the final <answer>...</answer> block."""
+    matches = re.findall(
+        r"<answer>(.*?)</answer>",
+        str(text),
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    if matches:
+        return matches[-1].strip(), True
+
+    return str(text).strip(), False
+
+
+def extract_braced_command(
     text: str,
     command: str,
 ) -> list[str]:
@@ -245,10 +406,12 @@ def extract_latex_command_argument(
     for match in pattern.finditer(text):
 
         start = match.end()
+
         depth = 1
+
         index = start
 
-        while index < len(text) and depth > 0:
+        while index < len(text) and depth:
 
             if text[index] == "{":
                 depth += 1
@@ -259,100 +422,109 @@ def extract_latex_command_argument(
             index += 1
 
         if depth == 0:
+
             results.append(
-                text[start:index - 1].strip()
+                text[
+                    start:index - 1
+                ].strip()
             )
 
     return results
 
 
-def extract_prompt_from_messages(
-    messages: list[dict[str, Any]],
-) -> str:
-
-    prompt_parts: list[str] = []
-
-    for message in messages:
-
-        if message.get("role") != "user":
-            continue
-
-        content = message.get("content", "")
-
-        if isinstance(content, str):
-
-            prompt_parts.append(content)
-            continue
-
-        if isinstance(content, list):
-
-            prompt_parts.extend(
-                str(item["text"])
-                for item in content
-                if (
-                    isinstance(item, dict)
-                    and item.get("type") == "text"
-                    and "text" in item
-                )
-            )
-
-    return "\n".join(prompt_parts).strip()
-
-
-def extract_answer_tag(
-    text: str,
-) -> tuple[str, bool]:
-
-    matches = re.findall(
-        r"<answer>(.*?)</answer>",
-        str(text),
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-
-    if matches:
-        return matches[-1].strip(), True
-
-    return str(text).strip(), False
-
-
 def extract_math500_answer(
     text: str,
 ) -> tuple[str, str]:
+    """
+    Extraction priority:
 
-    text = str(text).strip()
+    1. \\boxed{...}
+    2. <answer>...</answer>
+    3. Final Answer: ...
+    4. Answer: ...
 
-    tagged_answer, has_answer_tag = extract_answer_tag(text)
+    If none succeeds:
+        ("", "no_answer_marker")
+    """
 
-    if has_answer_tag:
-        return tagged_answer, "answer_tag"
+    text = str(text)
 
-    boxed_answers = extract_latex_command_argument(
+    # --------------------------------------------------------
+    # 1. \boxed{...}
+    # --------------------------------------------------------
+
+    boxed = extract_braced_command(
         text,
         "boxed",
     )
 
-    if boxed_answers:
-        return boxed_answers[-1].strip(), "boxed"
+    if boxed:
+        answer = boxed[-1].strip()
 
-    final_answer_matches = list(
+        if answer:
+            return answer, "boxed"
+
+    # --------------------------------------------------------
+    # 2. <answer>...</answer>
+    # --------------------------------------------------------
+
+    tags = re.findall(
+        r"<answer>(.*?)</answer>",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    if tags:
+        answer = tags[-1].strip()
+
+        if answer:
+            return answer, "answer_tag"
+
+    # --------------------------------------------------------
+    # 3. Final Answer: ...
+    # --------------------------------------------------------
+
+    matches = list(
         re.finditer(
-            r"(?:Final\s+Answer|Answer)\s*:?\s*",
+            r"Final\s+Answer\s*:?\s*",
             text,
             flags=re.IGNORECASE,
         )
     )
 
-    if final_answer_matches:
+    if matches:
+        remainder = text[
+            matches[-1].end():
+        ].strip()
 
-        answer_start = final_answer_matches[-1].end()
-        answer_text = text[answer_start:].strip()
+        for line in remainder.splitlines():
+            line = line.strip()
 
-        for line in answer_text.splitlines():
+            if line:
+                return line, "final_answer"
 
-            cleaned_line = line.strip()
+    # --------------------------------------------------------
+    # 4. Answer: ...
+    # --------------------------------------------------------
 
-            if cleaned_line:
-                return cleaned_line, "final_answer"
+    matches = list(
+        re.finditer(
+            r"Answer\s*:?\s*",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+    if matches:
+        remainder = text[
+            matches[-1].end():
+        ].strip()
+
+        for line in remainder.splitlines():
+            line = line.strip()
+
+            if line:
+                return line, "answer"
 
     return "", "no_answer_marker"
 
@@ -360,6 +532,13 @@ def extract_math500_answer(
 def extract_math500_gold(
     answer: Any,
 ) -> str:
+    """
+    EXACTLY aligned with eval_math500_displacement.py:
+
+        <answer>...</answer>
+        -> \\boxed{...}
+        -> raw text
+    """
 
     if answer is None:
         return ""
@@ -374,20 +553,98 @@ def extract_math500_gold(
 
     text = str(answer).strip()
 
-    tagged_answer, has_answer_tag = extract_answer_tag(text)
+    # --------------------------------------------------------
+    # 1. <answer>...</answer>
+    # --------------------------------------------------------
 
-    if has_answer_tag:
-        return tagged_answer
+    tags = re.findall(
+        r"<answer>(.*?)</answer>",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
 
-    boxed_answers = extract_latex_command_argument(
+    if tags:
+        return tags[-1].strip()
+
+    # --------------------------------------------------------
+    # 2. \boxed{...}
+    # --------------------------------------------------------
+
+    boxed = extract_braced_command(
         text,
         "boxed",
     )
 
-    if boxed_answers:
-        return boxed_answers[-1].strip()
+    if boxed:
+        return boxed[-1].strip()
+
+    # --------------------------------------------------------
+    # 3. raw text
+    # --------------------------------------------------------
 
     return text
+
+
+def math500_reward_func(
+    completion: str,
+    answer: Any,
+    **_: Any,
+) -> float:
+    """
+    EXACTLY aligned with eval_math500_displacement.py.
+
+    Empty / unextractable prediction -> reward 0.
+
+    Otherwise:
+
+        grade_answer(
+            given_answer=prediction,
+            ground_truth=gold,
+        )
+    """
+
+    prediction, method = (
+        extract_math500_answer(
+            completion
+        )
+    )
+
+    gold = extract_math500_gold(
+        answer
+    )
+
+    # Same behavior as displacement evaluator:
+    # no answer marker -> reward = 0
+    if not prediction:
+        return 0.0
+
+    if not gold:
+        return 0.0
+
+    try:
+
+        reward = float(
+            grade_answer(
+                given_answer=prediction,
+                ground_truth=gold,
+            )
+        )
+
+        return reward
+
+    except Exception as error:
+
+        print(
+            "[math500_reward_func] "
+            f"prediction={prediction!r}, "
+            f"gold={gold!r}, "
+            f"method={method}, "
+            f"error={type(error).__name__}: "
+            f"{error}",
+            flush=True,
+        )
+
+        return 0.0
 
 
 # ============================================================
@@ -432,51 +689,6 @@ def load_gsm8k_example(
         ),
     }
 
-
-def load_math500_example(
-    example: dict[str, Any],
-) -> dict[str, Any]:
-
-    if "messages" not in example:
-        raise KeyError(
-            "Math500 example is missing 'messages'"
-        )
-
-    if "solution" not in example:
-        raise KeyError(
-            "Math500 example is missing 'solution'"
-        )
-
-    prompt = extract_prompt_from_messages(
-        example["messages"]
-    )
-
-    answer = str(
-        example["solution"]
-    ).strip()
-
-    if not prompt:
-        raise ValueError(
-            "Math500 example has no user prompt"
-        )
-
-    if not answer:
-        raise ValueError(
-            "Math500 example has an empty solution"
-        )
-
-    return {
-        "prompt": prompt,
-        "answer": answer,
-        "metadata": example.get(
-            "metadata",
-            {},
-        ),
-        "extra_info": example.get(
-            "extra_info",
-            {},
-        ),
-    }
 
 
 def load_chess_example(
@@ -803,53 +1015,6 @@ def gsm8k_reward_func(
     )
 
 
-# ============================================================
-# Math500
-# ============================================================
-
-def math500_reward_func(
-    completion: str,
-    answer: str,
-    **_: Any,
-) -> float:
-
-    prediction_text, _ = (
-        extract_math500_answer(
-            completion
-        )
-    )
-
-    target_text = extract_math500_gold(
-        answer
-    )
-
-    if (
-        not prediction_text
-        or not target_text
-    ):
-        return 0.0
-
-    try:
-
-        return float(
-            grade_answer(
-                given_answer=prediction_text,
-                ground_truth=target_text,
-            )
-        )
-
-    except Exception as error:
-
-        print(
-            "[math500_reward_func] "
-            f"prediction={prediction_text!r}, "
-            f"target={target_text!r}, "
-            f"error={type(error).__name__}: "
-            f"{error}",
-            flush=True,
-        )
-
-        return 0.0
 
 
 # ============================================================
@@ -1784,6 +1949,7 @@ def build_output_stem(
         f"dirseed{args.direction_seed}_"
         f"pts{args.num_points}_"
         f"{args.num_directions}randomdirs_"
+        f"lr{args.lr}_"
         f"vllm"
     )
 
@@ -1831,140 +1997,135 @@ def save_results(
         std_column: str,
         filename: str,
         title_suffix: str,
+        relative: bool = False,
     ) -> None:
+        fig, ax = plt.subplots(figsize=(8, 5))
 
-        plt.figure(
-            figsize=(8, 5)
-        )
+        for direction_name, subset in df.groupby("direction"):
+            subset = subset.sort_values("perturbation_coefficient")
 
-        for (
-            direction_name,
-            subset,
-        ) in df.groupby(
-            "direction"
-        ):
+            x = subset["perturbation_coefficient"].to_numpy(dtype=float)
+            y = subset["reward"].to_numpy(dtype=float)
+            error = subset[std_column].to_numpy(dtype=float)
 
-            subset = subset.sort_values(
-                "perturbation_coefficient"
-            )
+            if relative:
+                zero_rows = subset.loc[
+                    subset["perturbation_coefficient"] == 0.0
+                ]
 
-            x = subset[
-                "perturbation_coefficient"
-            ].to_numpy()
+                if len(zero_rows) != 1:
+                    raise ValueError(
+                        f"Direction {direction_name}: "
+                        "需要唯一的 perturbation_coefficient=0 结果"
+                    )
 
-            mean_reward = subset[
-                "reward"
-            ].to_numpy()
+                baseline = float(zero_rows["reward"].iloc[0])
 
-            std_error = subset[
-                std_column
-            ].to_numpy()
+                if not np.isfinite(baseline) or baseline == 0.0:
+                    raise ValueError(
+                        f"Direction {direction_name}: "
+                        f"0 点 reward={baseline}，无法归一化"
+                    )
 
-            line = plt.plot(
+                y = y / baseline
+                error = error / abs(baseline)
+
+            line = ax.plot(
                 x,
-                mean_reward,
+                y,
                 marker="o",
                 linewidth=2,
                 label=direction_name,
             )[0]
 
-            lower_bound = np.clip(
-                mean_reward - std_error,
-                0.0,
-                1.0,
-            )
+            lower = y - error
+            upper = y + error
 
-            upper_bound = np.clip(
-                mean_reward + std_error,
-                0.0,
-                1.0,
-            )
+            # Absolute reward 的误差带裁剪到 [0, 1]。
+            # Relative reward 可以超过 1，因此不裁剪。
+            if not relative:
+                lower = np.clip(lower, 0.0, 1.0)
+                upper = np.clip(upper, 0.0, 1.0)
 
-            plt.fill_between(
+            ax.fill_between(
                 x,
-                lower_bound,
-                upper_bound,
+                lower,
+                upper,
                 alpha=0.2,
                 color=line.get_color(),
             )
 
-        plt.xlabel(
-            "Perturbation coefficient"
-        )
+        ax.axvline(0.0, linestyle="--", linewidth=1, color="black")
 
-        plt.ylabel(
-            "Mean reward"
-        )
+        if relative:
+            ax.axhline(1.0, linestyle=":", linewidth=1, color="gray")
+            ax.set_ylabel("Relative reward: R(coefficient) / R(0)")
+            # 自动缩放，避免截断归一化后的曲线和误差带。
+        else:
+            ax.set_ylabel("Mean reward")
+            ax.set_ylim(args.ymin, args.ymax)
 
-        plt.title(
+        mode = "relative" if relative else "absolute"
+        ax.set_title(
             f"{args.rl_type.upper()} "
             f"{args.dataset} "
-            f"step "
-            f"{args.checkpoint_step} "
-            f"reward landscape "
+            f"step {args.checkpoint_step} "
+            f"{mode} reward landscape "
             f"({title_suffix})"
         )
 
-        plt.ylim(
-            args.ymin,
-            args.ymax,
-        )
-
-        plt.minorticks_on()
-
-        plt.grid(
+        ax.set_xlabel("Perturbation coefficient")
+        ax.minorticks_on()
+        ax.grid(
             which="major",
             linestyle="--",
             linewidth=0.5,
             alpha=0.8,
         )
-
-        plt.grid(
+        ax.grid(
             which="minor",
             linestyle=":",
             linewidth=0.3,
             alpha=0.3,
         )
 
-        plt.legend()
-        plt.tight_layout()
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(output_dir / filename, dpi=300)
+        plt.close(fig)
 
-        plt.savefig(
-            output_dir / filename,
-            dpi=300,
-        )
-
-        plt.close()
 
     plot_landscape(
-        "generation_mean_std",
-        f"{stem}_generation_mean_std.png",
-        "generation-mean std",
+        std_column="std_error_generation_mean",
+        filename=f"{stem}_absolute_reward_generation_mean_se.png",
+        title_suffix="generation-mean SE",
+        relative=False,
     )
 
     plot_landscape(
-        "std_error_generation_mean",
-        f"{stem}_generation_mean_se.png",
-        "generation-mean SE",
+        std_column="std_error_generation_mean",
+        filename=f"{stem}_relative_reward_generation_mean_se.png",
+        title_suffix="generation-mean SE",
+        relative=True,
     )
 
-    plot_landscape(
-        "std",
-        f"{stem}_reward_std.png",
-        "reward std",
-    )
+    # plot_landscape(
+    #     "std",
+    #     f"{stem}_reward_std.png",
+    #     "reward std",
+    # )
 
-    plot_landscape(
-        "se",
-        f"{stem}_reward_se.png",
-        "reward SE",
-    )
+    # plot_landscape(
+    #     "se",
+    #     f"{stem}_reward_se.png",
+    #     "reward SE",
+    # )
 
-    plot_landscape(
-        "std_error_prompt_rms",
-        f"{stem}_prompt_rms.png",
-        "prompt-level RMS std",
-    )
+    # plot_landscape(
+    #     "std_error_prompt_rms",
+    #     f"{stem}_prompt_rms.png",
+    #     "prompt-level RMS std",
+    # )
 
     print(
         f"\nSaved results to {output_dir}",
