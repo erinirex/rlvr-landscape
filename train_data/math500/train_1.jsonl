@@ -1,0 +1,1 @@
+{"id":1, "messages": [{"role": "user", "content": "Let $p(x)$ be a polynomial of degree 5 such that\n\\[p(n) = \\frac{n}{n^2 - 1}\\]for $n = 2,$ 3, 4, $\\dots,$ 7.  Find $p(8).$\n\nSolve the problem step by step. Put only the final answer inside \\boxed{...}."}], "solution": "\\frac{3}{56}"}

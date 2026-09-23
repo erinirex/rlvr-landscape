@@ -1,0 +1,1 @@
+{"messages": [{"role": "user", "content": "Consider the rectangle with vertices at $(5,4),$ $(5,-4),$ $(-5,4),$ $(-5,-4)$. How many integer coordinates will be strictly inside the rectangular region?\n\nSolve the problem step by step. Put only the final answer inside \\boxed{...}."}], "solution": "63"}

@@ -2,27 +2,46 @@
 
 This repository provides code for visualizing the **reward landscape** of RLVR-trained language models.
 
-The visualization evaluates the average reward of a trained model along randomly sampled parameter-space directions. Currently, the repository supports two reasoning tasks:
+We currently focus exclusively on **MATH500**. The visualization evaluates the model’s average reward along three types of parameter-space directions:
 
-- GSM8K
-- Chess
+- **Random direction**: a randomly sampled direction in parameter space.
+- **SGD direction**: a direction derived from stochastic gradient descent.
+- **Displacement between adjacent steps**: the parameter difference between two consecutive training steps.
 
-The chess task related model and data are from the project https://arxiv.org/pdf/2607.16097. You can download the chess llm checkpoints from huggingface: https://huggingface.co/chess-pre-to-post. 
-The checkpoints starting with "rl" are trained with GRPO. 
-The RL training data is in train_data/chess_data.
+## Data
+
+The dataset is located in `/train_data/math500`:
+
+- `test/test_500.jsonl`: the complete set of 500 examples.
+- `train.jsonl`: a training subset of 300 examples.
+- `test.jsonl`: a test subset of 200 examples.
+
+## Experimental Setup and Goal
+
+Our initial experiments trained models on the 300-example training subset and visualized their reward landscapes on the same examples.
+
+Our next focus is to repeatedly train on a fixed subset of **1 or 8 examples** until the model overfits, then visualize the reward landscape on those same examples.
+
+The goal is to observe how the reward landscape differs across **training stages** and between **better- and worse-performing models**, including how it changes as training progresses toward overfitting.
 
 ## Usage
 
-### GSM8K
+### Random Direction
 
 ```bash
-bash scripts/run_qwen_gsm8k.sh
+bash scripts/run_qwen_math500_vllm.sh
 ```
 
-### Chess
+### SGD Direction
 
 ```bash
-bash scripts/run_qwen_chess.sh
+bash scripts/run_qwen_math500_sgd.sh
 ```
 
-The shell scripts contain all necessary configurations, including the model checkpoint, dataset path, and visualization hyperparameters. Please modify these paths as needed before running.
+### Displacement Between Adjacent Steps
+
+```bash
+bash scripts/run_qwen_math500_displacement.sh
+```
+
+The shell scripts contain the configurations for model checkpoints, dataset paths, and visualization hyperparameters. Please modify these configurations as needed before running.

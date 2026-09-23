@@ -7,7 +7,7 @@ set -euo pipefail
 # GPU settings
 # ============================================================
 export VLLM_ALLOW_INSECURE_SERIALIZATION=1
-GPU="2"
+GPU="0"
 PYTHON_SCRIPT="visualize_reward_landscape_vllm.py"
 
 # ============================================================
@@ -17,20 +17,28 @@ PYTHON_SCRIPT="visualize_reward_landscape_vllm.py"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train100_lr_5e-6_max8192/v1-20260821-105102/checkpoint-100"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-275"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-75"
-MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-50"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train8_lr_5e-6_max2048/v2-20260917-200704/checkpoint-250"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-50"
+MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-10"
+
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-50"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-117"
 
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v18-20260903-125040/checkpoint-49"
 
-EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train.jsonl"
+EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_id299.jsonl"
+# EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_8.jsonl"
+
+# EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train.jsonl"
+
 
 TASK="math500"
 RL_TYPE="grpo"
 DATASET="math500"
 MODEL_NAME="qwen3_0.6b"
-LR="3e-6"
+LR="5e-6"
 # CHECKPOINT_STEP=275
-CHECKPOINT_STEP=50
+CHECKPOINT_STEP=10
 # CHECKPOINT_STEP=117
 
 
@@ -38,14 +46,14 @@ CHECKPOINT_STEP=50
 # Evaluation
 # ============================================================
 
-NUM_SAMPLES=100
+NUM_SAMPLES=1
 
 MAX_NEW_TOKENS=2048
 
 SEED=42
 
 # 每个 prompt 生成多少个 samples
-GROUP_SIZE=4
+GROUP_SIZE=64
 
 TMP=0.7
 TOP_P=0.8
@@ -69,7 +77,7 @@ NUM_POINTS=21
 # vLLM settings
 # ============================================================
 
-GPU_MEMORY_UTILIZATION=0.5
+GPU_MEMORY_UTILIZATION=0.3
 MAX_NUM_SEQS=8
 MAX_MODEL_LEN=16384
 
@@ -80,7 +88,7 @@ MAX_MODEL_LEN=16384
 YMIN=0.0
 YMAX=1.1
 
-OUTPUT_DIR="figs_math500_grpo_random_lr_${LR}_vllm"
+OUTPUT_DIR="figs_math500_grpo_random_lr_${LR}_vllm_train1"
 
 RUN_NAME="${RL_TYPE}_${DATASET}_${MODEL_NAME}"\
 "_random${NUM_DIRECTIONS}"\
@@ -94,7 +102,7 @@ RUN_NAME="${RL_TYPE}_${DATASET}_${MODEL_NAME}"\
 "_gpu${GPU}"\
 "_vllm"
 
-LOG_DIR="logs_math500_grpo_random_lr_${LR}_vllm"
+LOG_DIR="logs_math500_grpo_random_lr_${LR}_vllm_train1"
 
 mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}"
 

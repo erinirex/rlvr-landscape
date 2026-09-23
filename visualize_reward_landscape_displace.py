@@ -1838,7 +1838,7 @@ def main():
         args.num_points,
     )
 
-    alpha_values = np.unique(np.append(alpha_values, [0.0, 100.0]))
+    alpha_values = np.unique(np.append(alpha_values, [0.0, 1.0]))
 
     # ========================================================
     # Results

@@ -1,4 +1,4 @@
-# env CUDA_VISIBLE_DEVICES=3 nohup python sgd_direction.py > sgd_gs4_stp120_lr_3e-6.log 2>&1 &
+# env CUDA_VISIBLE_DEVICES=0 nohup python sgd_direction.py > sgd_gs32_stp110_train1.log 2>&1 &
 import argparse
 import gc
 import json
@@ -897,6 +897,7 @@ def compute_grpo_gradient(
         len(item["completion_token_ids"])
         for item in rollout
     )
+    num_completions = len(rollout)
 
     if total_tokens == 0:
         raise RuntimeError("No valid completion tokens.")
@@ -928,11 +929,14 @@ def compute_grpo_gradient(
         if log_probs.numel() == 0:
             continue
 
-        # Preserve the original objective:
+        # GRPO policy-gradient surrogate:
+        # average over tokens within each completion,
+        # then average over all completions.
+
         # loss = -sum(advantage * token_log_prob) / total_tokens
-        loss_i = -(
-            advantage * log_probs
-        ).sum() / total_tokens
+
+        loss_i = -(advantage * log_probs).sum() / total_tokens
+        # loss_i = -advantage * log_probs.mean() / num_completions
 
         if not torch.isfinite(loss_i).item():
             raise RuntimeError(
@@ -1181,28 +1185,30 @@ def main():
         # 模型：替换为你的实际 checkpoint 路径
         # model_ckpt="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-75",
         # model_ckpt="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-275",
-        model_ckpt="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-120",
+        # model_ckpt="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-120",
+        # model_ckpt="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train8_lr_5e-6_max2048/v2-20260917-200704/checkpoint-50",
+        model_ckpt="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-110",
         model_name="qwen3_0.6b",
 
         # 仅用于输出文件命名，不负责选择 checkpoint
-        checkpoint_step=120,
+        checkpoint_step=110,
 
         dtype="bfloat16",
 
         # 数据：替换为你的实际数据路径
-        eval_json="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train.jsonl",
+        eval_json="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_id299.jsonl",
         task="math500",
-        num_samples=300,
-        pg_num_prompts=16,
+        num_samples=1,
+        pg_num_prompts=1,
 
         # vLLM
         tensor_parallel_size=1,
-        gpu_memory_utilization=0.90,
+        gpu_memory_utilization=0.25,
         max_model_len=16384,
 
         # GRPO rollout
         num_directions=1,
-        group_size=4,
+        group_size=32,
         temperature=0.7,
         top_p=0.8,
         top_k=20,
@@ -1210,7 +1216,7 @@ def main():
         seed=42,
 
         # 保存目录
-        direction_dir="./sgd_directions",
+        direction_dir="./sgd_directions_train1",
     )
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -1344,7 +1350,7 @@ def main():
             direction_path = direction_dir / (
                 f"{args.model_name}_"
                 f"{step_name}_"
-                f"sgd_raw_direction_{direction_idx}.pt"
+                f"sgd_raw_direction_{direction_idx}_gs{args.group_size}.pt"
             )
 
             try:

@@ -16,7 +16,7 @@ export VLLM_ALLOW_INSECURE_SERIALIZATION=1
 
 # IMPORTANT:
 # Python script is configured for 2-GPU vLLM TP=2
-GPU="6"
+GPU="2"
 
 PYTHON_SCRIPT="visualize_reward_landscape_displace.py"
 # PYTHON_SCRIPT="visualize_reward_landscape_displace_multigpu.py"
@@ -27,16 +27,18 @@ PYTHON_SCRIPT="visualize_reward_landscape_displace.py"
 
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-75"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v18-20260903-125040/checkpoint-49"
-MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-119"
-
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-103"
+MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train8_lr_5e-6_max2048/v2-20260917-200704/checkpoint-109"
 # DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/param_displace/displacement_49_to_50.pt"
-DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/param_displace/displacement_lr_3e-6_119_to_120.pt"
+DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/param_displace/displacement_lr_5e-6_109_to_110.pt"
 
-EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train.jsonl"
+# EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_id299.jsonl"
+EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_8.jsonl"
+
 
 MODEL_NAME="qwen3_0.6b"
-CHECKPOINT_STEP=119
-DIR_STEP=120
+CHECKPOINT_STEP=109
+DIR_STEP=110
 
 TASK="math500"
 
@@ -44,7 +46,7 @@ TASK="math500"
 # Evaluation
 # ============================================================
 
-NUM_SAMPLES=100
+NUM_SAMPLES=8
 
 MAX_NEW_TOKENS=2048
 
@@ -73,10 +75,10 @@ DIRECTION_TYPE="displacement"
 # Landscape
 # ============================================================
 
-SCALE=0.01
+SCALE=1
 ALPHA_RANGE=20
-ALPHA_LEFT=70000
-ALPHA_RIGHT=70000
+ALPHA_LEFT=50
+ALPHA_RIGHT=50
 
 NUM_POINTS=21
 
@@ -86,7 +88,7 @@ NUM_POINTS=21
 
 TENSOR_PARALLEL_SIZE=1
 
-GPU_MEMORY_UTILIZATION=0.9
+GPU_MEMORY_UTILIZATION=0.3
 
 MAX_MODEL_LEN=16384
 
@@ -96,9 +98,9 @@ DTYPE="bfloat16"
 # Output
 # ============================================================
 
-OUTPUT_DIR="figs_math500_grpo_displacement"
+OUTPUT_DIR="figs_math500_grpo_displacement_train8"
 
-LOG_DIR="logs_math500_grpo_displacement"
+LOG_DIR="logs_math500_grpo_displacement_train8"
 
 RUN_NAME="${DIRECTION_TYPE}"\
 "_${MODEL_NAME}"\

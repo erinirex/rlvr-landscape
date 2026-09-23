@@ -2223,7 +2223,9 @@ def main():
         args.num_points,
     )
 
-    alpha_values = np.unique(np.append(alpha_values, [0.0, 100.0]))
+    # alpha_values = np.unique(np.append(alpha_values, [0.0, 1.0]))
+    alpha_values = np.unique(np.append(alpha_values, [0.0]))
+
 
     # ========================================================
     # Results
@@ -2489,10 +2491,10 @@ def main():
         if relative:
             ax.axhline(1.0, linestyle=":", linewidth=1, color="gray")
             ax.set_ylabel("Relative Reward: R(coefficient) / R(0)")
-            ax.set_title("Math500 Relative Reward Landscape")
+            ax.set_title(f"Math500 Relative Reward Landscape SGD direction step {args.checkpoint_step} gs {args.group_size}")
         else:
             ax.set_ylabel("Mean Math500 Reward")
-            ax.set_title("Math500 Absolute Reward Landscape")
+            ax.set_title(f"Math500 Absolute Reward Landscape SGD direction step {args.checkpoint_step} gs {args.group_size}")
 
         ax.set_ylim(0.0, 1.5)
         ax.set_xlabel("Perturbation coefficient")

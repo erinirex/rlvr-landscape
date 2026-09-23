@@ -11,22 +11,28 @@ export VLLM_ALLOW_INSECURE_SERIALIZATION=1
 
 # IMPORTANT:
 # Python script is configured for 2-GPU vLLM TP=2
-GPU="7"
+GPU="0"
 
 PYTHON_SCRIPT="visualize_reward_landscape_sgd.py"
 
 # ============================================================
 # Model
 # ============================================================
+CHECKPOINT_STEP=110
 
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v2-20260902-234342/checkpoint-100"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-75"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-275"
-MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-120"
-EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train.jsonl"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train8_lr_5e-6_max2048/v2-20260917-200704/checkpoint-100"
+MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-${CHECKPOINT_STEP}"
+
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-120"
+# EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train.jsonl"
+# EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_8.jsonl"
+EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_id299.jsonl"
+
 
 MODEL_NAME="qwen3_0.6b"
-CHECKPOINT_STEP=120
 
 TASK="math500"
 
@@ -34,7 +40,7 @@ TASK="math500"
 # Evaluation
 # ============================================================
 
-NUM_SAMPLES=300
+NUM_SAMPLES=1
 
 MAX_NEW_TOKENS=2048
 
@@ -45,7 +51,7 @@ SEED=42
 # ============================================================
 
 PG_NUM_PROMPTS=16
-GROUP_SIZE=4
+GROUP_SIZE=64
 
 # Sampling parameters
 TEMPERATURE=0.7
@@ -58,18 +64,22 @@ TOP_K=20
 
 NUM_DIRECTIONS=1
 # DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/figs_math500_grpo_sgd/directions/qwen3_0.6b_step100_grpo_direction_0.pt"
-DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions/qwen3_0.6b_step120_sgd_raw_direction_0.pt"
+# DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions/qwen3_0.6b_step120_sgd_raw_direction_0.pt"
+# DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions_train8/qwen3_0.6b_step100_sgd_raw_direction_0.pt"
+DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions_train1/qwen3_0.6b_step${CHECKPOINT_STEP}_sgd_raw_direction_0_gs32.pt"
+# DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions_train1/qwen3_0.6b_step100_sgd_raw_direction_0_gs32.pt"
+
 DIRECTION_TYPE="grpo-grad"
 
 # ============================================================
 # Landscape
 # ============================================================
 
-SCALE=0.0010
-ALPHA_LEFT=700
-ALPHA_RIGHT=700
+SCALE=1
+ALPHA_LEFT=50000e-6
+ALPHA_RIGHT=50000e-6
 
-NUM_POINTS=21
+NUM_POINTS=31
 
 # ============================================================
 # vLLM
@@ -77,7 +87,7 @@ NUM_POINTS=21
 
 TENSOR_PARALLEL_SIZE=1
 
-GPU_MEMORY_UTILIZATION=0.8
+GPU_MEMORY_UTILIZATION=0.25
 
 MAX_MODEL_LEN=16384
 
@@ -87,9 +97,9 @@ DTYPE="bfloat16"
 # Output
 # ============================================================
 
-OUTPUT_DIR="figs_math500_grpo_sgd"
+OUTPUT_DIR="figs_math500_grpo_sgd_train1"
 
-LOG_DIR="logs_math500_grpo_sgd"
+LOG_DIR="logs_math500_grpo_sgd_train1"
 
 RUN_NAME="${DIRECTION_TYPE}"\
 "_${MODEL_NAME}"\
@@ -104,6 +114,7 @@ RUN_NAME="${DIRECTION_TYPE}"\
 
 mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}"
 
+# LOG_FILE="${LOG_DIR}/${RUN_NAME}_direc_step100.log"
 LOG_FILE="${LOG_DIR}/${RUN_NAME}.log"
 
 # ============================================================
