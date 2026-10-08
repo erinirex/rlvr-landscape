@@ -1,0 +1,92 @@
+[INFO:swift] Successfully registered `/mnt/sj/home/yichen/ms-swift/swift/dataset/data/dataset_info.json`.
+[INFO:swift] Setting args.remove_unused_columns: False
+INFO 10-01 10:25:01 [__init__.py:216] Automatically detected platform cuda.
+Traceback (most recent call last):
+  File "/mnt/sj/home/anaconda3/envs/qwen3/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/mnt/sj/home/anaconda3/envs/qwen3/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/mnt/sj/home/yichen/ms-swift/swift/cli/rlhf.py", line 7, in <module>
+    rlhf_main()
+  File "/mnt/sj/home/yichen/ms-swift/swift/pipelines/train/rlhf.py", line 246, in rlhf_main
+    return SwiftRLHF(args).main()
+  File "/mnt/sj/home/yichen/ms-swift/swift/pipelines/train/sft.py", line 27, in __init__
+    super().__init__(args)
+  File "/mnt/sj/home/yichen/ms-swift/swift/pipelines/base.py", line 18, in __init__
+    self.args = self._parse_args(args)
+  File "/mnt/sj/home/yichen/ms-swift/swift/pipelines/base.py", line 35, in _parse_args
+    args, remaining_argv = parse_args(self.args_class, args)
+  File "/mnt/sj/home/yichen/ms-swift/swift/utils/utils.py", line 182, in parse_args
+    args, remaining_args = parser.parse_args_into_dataclasses(argv, return_remaining_strings=True)
+  File "/mnt/sj/home/anaconda3/envs/qwen3/lib/python3.10/site-packages/transformers/hf_argparser.py", line 345, in parse_args_into_dataclasses
+    obj = dtype(**inputs)
+  File "<string>", line 466, in __init__
+  File "/mnt/sj/home/yichen/ms-swift/swift/arguments/rlhf_args.py", line 281, in __post_init__
+    SftArguments.__post_init__(self)
+  File "/mnt/sj/home/yichen/ms-swift/swift/arguments/sft_args.py", line 206, in __post_init__
+    BaseArguments.__post_init__(self)
+  File "/mnt/sj/home/yichen/ms-swift/swift/arguments/base_args/base_args.py", line 175, in __post_init__
+    self._import_external_plugins()
+  File "/mnt/sj/home/yichen/ms-swift/swift/arguments/base_args/base_args.py", line 149, in _import_external_plugins
+    import_external_file(external_plugin)
+  File "/mnt/sj/home/yichen/ms-swift/swift/utils/utils.py", line 406, in import_external_file
+    return importlib.import_module(py_file.split('.', 1)[0])
+  File "/mnt/sj/home/anaconda3/envs/qwen3/lib/python3.10/importlib/__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "<frozen importlib._bootstrap>", line 1050, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1027, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1006, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 688, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/mnt/sj/home/yichen/ms-swift/sample_pass_rate.py", line 18, in <module>
+    from swift.rlhf_trainers import GRPOTrainer
+  File "/mnt/sj/home/yichen/ms-swift/swift/utils/import_utils.py", line 103, in __getattr__
+    module = self._get_module(self._class_to_module[name])
+  File "/mnt/sj/home/yichen/ms-swift/swift/utils/import_utils.py", line 112, in _get_module
+    return importlib.import_module('.' + module_name, self.__name__)
+  File "/mnt/sj/home/anaconda3/envs/qwen3/lib/python3.10/importlib/__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "/mnt/sj/home/yichen/ms-swift/swift/rlhf_trainers/grpo_trainer.py", line 54, in <module>
+    from swift.rewards import orms, rm_plugins
+  File "/mnt/sj/home/yichen/ms-swift/swift/utils/import_utils.py", line 103, in __getattr__
+    module = self._get_module(self._class_to_module[name])
+  File "/mnt/sj/home/yichen/ms-swift/swift/utils/import_utils.py", line 112, in _get_module
+    return importlib.import_module('.' + module_name, self.__name__)
+  File "/mnt/sj/home/anaconda3/envs/qwen3/lib/python3.10/importlib/__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "/mnt/sj/home/yichen/ms-swift/swift/rewards/orm.py", line 11, in <module>
+    from swift.grading.grader import grade_answer
+  File "/mnt/sj/home/yichen/ms-swift/swift/grading/grader.py", line 11, in <module>
+    from grading import math_normalize
+ModuleNotFoundError: No module named 'grading'
+E1001 10:25:05.436000 3219124 site-packages/torch/distributed/elastic/multiprocessing/api.py:874] failed (exitcode: 1) local_rank: 0 (pid: 3219243) of binary: /mnt/sj/home/anaconda3/envs/qwen3/bin/python
+Traceback (most recent call last):
+  File "/mnt/sj/home/anaconda3/envs/qwen3/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+  File "/mnt/sj/home/anaconda3/envs/qwen3/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+  File "/mnt/sj/home/anaconda3/envs/qwen3/lib/python3.10/site-packages/torch/distributed/run.py", line 901, in main
+    run(args)
+  File "/mnt/sj/home/anaconda3/envs/qwen3/lib/python3.10/site-packages/torch/distributed/run.py", line 892, in run
+    elastic_launch(
+  File "/mnt/sj/home/anaconda3/envs/qwen3/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 143, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/mnt/sj/home/anaconda3/envs/qwen3/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 277, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+swift.cli.rlhf FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-10-01_10:25:05
+  host      : lyg0235
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 3219243)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
