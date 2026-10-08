@@ -7,18 +7,48 @@ from transformers import AutoModelForCausalLM
 # CKPT_I = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-75"
 # CKPT_J = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-100"
 
-CKPT_I = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-119"
-CKPT_J = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-120"
+# CKPT_I = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-119"
+# CKPT_J = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-120"
 
+# CKPT_I = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-103"
+# CKPT_J = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-104"
+
+# CKPT_I = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train8_lr_5e-6_max2048/v2-20260917-200704/checkpoint-109"
+# CKPT_J = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train8_lr_5e-6_max2048/v2-20260917-200704/checkpoint-110"
+
+TRAIN_SEED = 42
+# CKPT_I = "/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train1_seed50_gs4_lr_5e-6_max2048/v0-20261001-233843/checkpoint-20"
+# CKPT_J = "/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train1_seed50_gs4_lr_5e-6_max2048/v0-20261001-233843/checkpoint-40"
+
+CKPT_I = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train8_50_80_lr_5e-6_max2048/v1-20260925-122541/checkpoint-10"
+CKPT_J = "/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train8_50_80_lr_5e-6_max2048/v1-20260925-122541/checkpoint-50"
+
+# CKPT_I = "/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train1_seed50_gs4_lr_5e-6_max2048/v0-20261002-001611/checkpoint-20"
+# CKPT_J = "/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train1_seed50_gs4_lr_5e-6_max2048/v0-20261002-001611/checkpoint-40"
+
+# CKPT_I="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train1_seed42_gs4_lr_5e-6_max2048/v0-20261001-233655/checkpoint-10"
+# CKPT_J="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train1_seed42_gs4_lr_5e-6_max2048/v0-20261001-233655/checkpoint-80"
+
+# CKPT_I="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train1_seed42_gs16_lr_5e-6_max2048/v0-20261002-001611/checkpoint-10"
+# CKPT_J="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train1_seed42_gs16_lr_5e-6_max2048/v0-20261002-001611/checkpoint-80"
 # STEP_I = 75
 # STEP_J = 100
 
-STEP_I = 119
-STEP_J = 120
+# STEP_I = 109
+# STEP_J = 110
+
+# STEP_I = 40
+# STEP_J = 80
+
+# STEP_I = 20
+# STEP_J = 40
+
+STEP_I = 10
+STEP_J = 50
 
 OUTPUT = (
-    f"/mnt/swordfish-pool2/erinxia/rlvr-landscape/param_displace/"
-    f"displacement_lr_3e-6_{STEP_I}_to_{STEP_J}.pt"
+    f"/mnt/swordfish-pool2/erinxia/rlvr-landscape/param_displace_train8_gs4/"
+    f"displacement_train8_gs4_seed_{TRAIN_SEED}_lr_5e-6_{STEP_I}_to_{STEP_J}.pt"
 )
 
 if not Path(OUTPUT).parent.exists():
