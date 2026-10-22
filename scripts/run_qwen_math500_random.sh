@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bash scripts/run_qwen_math500_vllm.sh
+# bash scripts/run_qwen_math500_random.sh
 
 # ============================================================
 # GPU settings
 # ============================================================
 export VLLM_ALLOW_INSECURE_SERIALIZATION=1
 GPU="0"
-PYTHON_SCRIPT="visualize_reward_landscape_vllm.py"
+PYTHON_SCRIPT="visualize_reward_landscape_random_parallel.py"
 TRAIN_SAMPLE=32
 CHECKPOINT_STEP=75
 LR="4e-6"
@@ -87,7 +87,6 @@ NUM_POINTS=15
 # ============================================================
 
 GPU_MEMORY_UTILIZATION=0.7
-MAX_NUM_SEQS=8
 MAX_MODEL_LEN=16384
 
 # ============================================================

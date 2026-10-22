@@ -1,19 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# bash scripts/run_qwen_math500_random_parallel.sh
 
-# bash scripts/run_qwen_math500_vllm.sh
+TRAIN_SAMPLE=32
+CHECKPOINT_STEP=140
+LR="4e-6"
+TRAIN_GS=4
+RL_TYPE="grpo"
+DATASET="math500"
+MODEL_NAME="qwen3_0.6b"
+
+OUTPUT_DIR="landscape_math500_grpo_random_train32"
+
+RUN_NAME="${RL_TYPE}_${DATASET}_${MODEL_NAME}"\
+"_scale${SCALE}_alpha${ALPHA_RANGE}"\
+"_lr${LR}"\
+"_data${NUM_SAMPLES}_group${GROUP_SIZE}"\
+"_ckpt${CHECKPOINT_STEP}"\
+"_train_gs${TRAIN_GS}"\
+"_max_new${MAX_NEW_TOKENS}"\
+"_pts${NUM_POINTS}_seed${SEED}"\
+
+ROOT="${OUTPUT_DIR}/${RUN_NAME}"
+
+if [[ "${LANDSCAPE_BACKGROUND:-0}" != "1" ]]; then
+  mkdir -p "${ROOT}/logs"
+  LOG_FILE="${ROOT}/logs/directions_$(date +%Y%m%d_%H%M%S)_$$.log"
+
+  nohup env LANDSCAPE_BACKGROUND=1 bash "$0" "$@" \
+    > "$LOG_FILE" 2>&1 < /dev/null &
+
+  PID=$!
+  echo "已后台启动，PID: $PID"
+  echo "总日志: $LOG_FILE"
+  echo "查看日志: tail -f \"$LOG_FILE\""
+  exit 0
+fi
+
 
 # ============================================================
 # GPU settings
 # ============================================================
 export VLLM_ALLOW_INSECURE_SERIALIZATION=1
-GPU="0"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_SCRIPT="${SCRIPT_DIR}/visualize_reward_landscape_vllm.py"
-TRAIN_SAMPLE=32
-CHECKPOINT_STEP=75
-LR="4e-6"
-TRAIN_GS=32
+PYTHON_SCRIPT="visualize_reward_landscape_random_global_norm_parallel.py"
 
 # ============================================================
 # Model
@@ -26,11 +56,11 @@ TRAIN_GS=32
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-50"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-10"
 
-# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train32_seed99_gs4_lr_${LR}_max2048/v2-20261009-005817/checkpoint-${CHECKPOINT_STEP}"
+MODEL_CKPT="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train32_seed99_gs4_lr_${LR}_max2048/v2-20261009-005817/checkpoint-${CHECKPOINT_STEP}"
 
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train32_seed99_gs16_lr_${LR}_max2048/v0-20261009-105123/checkpoint-${CHECKPOINT_STEP}"
 
-MODEL_CKPT="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train32_seed99_gs32_lr_${LR}_max2048/v0-20261014-210623/checkpoint-${CHECKPOINT_STEP}"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train32_seed99_gs32_lr_${LR}_max2048/v0-20261014-210623/checkpoint-${CHECKPOINT_STEP}"
 
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-50"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-117"
@@ -45,9 +75,7 @@ MODEL_CKPT="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthi
 EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_32.jsonl"
 
 TASK="math500"
-RL_TYPE="grpo"
-DATASET="math500"
-MODEL_NAME="qwen3_0.6b"
+
 # CHECKPOINT_STEP=275
 # CHECKPOINT_STEP=117
 
@@ -70,12 +98,6 @@ TOP_P=0.8
 TOP_K=20
 
 # ============================================================
-# Random directions
-# ============================================================
-
-NUM_DIRECTIONS=1
-
-# ============================================================
 # Landscape
 # ============================================================
 
@@ -87,8 +109,7 @@ NUM_POINTS=15
 # vLLM settings
 # ============================================================
 
-GPU_MEMORY_UTILIZATION=0.7
-MAX_NUM_SEQS=8
+GPU_MEMORY_UTILIZATION=0.8
 MAX_MODEL_LEN=16384
 
 # ============================================================
@@ -98,34 +119,16 @@ MAX_MODEL_LEN=16384
 YMIN=0.0
 YMAX=1.1
 
-OUTPUT_DIR="figs_math500_grpo_random_lr_${LR}_vllm_train${TRAIN_SAMPLE}_gs${TRAIN_GS}"
-
-RUN_NAME="${RL_TYPE}_${DATASET}_${MODEL_NAME}"\
-"_random${NUM_DIRECTIONS}"\
-"_scale${SCALE}_alpha${ALPHA_RANGE}"\
-"_lr${LR}"\
-"_data${NUM_SAMPLES}_group${GROUP_SIZE}"\
-"_ckpt${CHECKPOINT_STEP}"\
-"_train_gs${TRAIN_GS}"\
-"_max_new${MAX_NEW_TOKENS}"\
-"_pts${NUM_POINTS}_seed${SEED}"\
-"_gpu${GPU}"\
-"_vllm"
-
-LOG_DIR="logs_math500_grpo_random_lr_${LR}_vllm_train${TRAIN_SAMPLE}_gs${TRAIN_GS}"
-
-mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}"
-
-LOG_FILE="${LOG_DIR}/${RUN_NAME}.log"
 
 # Examples:
 # bash run_directions.sh --num-directions 12 --gpus 0,1,2,3 --seed-start 1001
 # bash run_directions.sh --groups 3 --gpus 0,1,2,3 --seed-start 1001
-GPU_LIST="0,1"
-TOTAL_DIRECTIONS=""
-NUM_GROUPS=""
+# Edit these settings, then run: bash run_directions.sh
+GPU_LIST="0,1,2,3"
+TOTAL_DIRECTIONS=""  # Set e.g. "10" for a fixed total; leave NUM_GROUPS empty.
+NUM_GROUPS="1"       # Set e.g. "3" for 3 groups; leave TOTAL_DIRECTIONS empty.
 SEED_START=1001
-SEEDS=()
+SEEDS=()             # Leave empty to generate seeds automatically.
 while (( $# > 0 )); do
   case "$1" in
     --num-directions|--groups|--gpus|--seed-start)
@@ -176,8 +179,7 @@ done
 echo "Directions: ${#SEEDS[@]}; GPUs: ${GPUS[*]}; groups: $(( (${#SEEDS[@]}+${#GPUS[@]}-1)/${#GPUS[@]} ))"
 echo "Direction seeds: ${SEEDS[*]}"
 # Includes experiment settings, excludes GPU and direction seed.
-ROOT="${OUTPUT_DIR}/${RUN_NAME%_gpu*}"
-mkdir -p "$ROOT"
+
 for ((start=0; start<${#SEEDS[@]}; start+=${#GPUS[@]})); do
   pids=()
   for ((slot=0; slot<${#GPUS[@]} && start+slot<${#SEEDS[@]}; slot++)); do
@@ -198,7 +200,7 @@ for ((start=0; start<${#SEEDS[@]}; start+=${#GPUS[@]})); do
         --seed "$SEED" --direction-seed "$ds" --num-directions 1 \
         --tensor-parallel-size 1 --scale "$SCALE" --alpha-range "$ALPHA_RANGE" \
         --num-points "$NUM_POINTS" --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
-        --max-num-seqs "$MAX_NUM_SEQS" --max-model-len "$MAX_MODEL_LEN" \
+        --max-model-len "$MAX_MODEL_LEN" \
         --output-dir "$out" --output-stem landscape --ymin "$YMIN" --ymax "$YMAX"
       touch "$out/DONE"
     ) 9>"$out/.lock" >"$out/run.log" 2>&1 &
@@ -209,4 +211,5 @@ for ((start=0; start<${#SEEDS[@]}; start+=${#GPUS[@]})); do
   for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
   (( failed == 0 )) || { echo "A direction failed; inspect run.log" >&2; exit 1; }
 done
-python "$SCRIPT_DIR/plot_directions.py" --root "$ROOT" --seeds "${SEEDS[@]}" --expected "${#SEEDS[@]}"
+# Merge all completed directions in this experiment, including earlier runs.
+python "$SCRIPT_DIR/plot_directions.py" --root "$ROOT"
