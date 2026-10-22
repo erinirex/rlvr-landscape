@@ -5,17 +5,30 @@ using vLLM.
 
 Key features:
 
-1. No HuggingFace model object is loaded.
-2. No direction file is required.
-3. Random directions are generated deterministically inside vLLM workers.
-4. The random direction is NOT stored permanently on GPU.
-5. The same random direction is regenerated for every alpha point.
-6. Sequential perturbation is used:
+1. Model loading and inference are handled by vLLM; no separate HuggingFace
+   model instance is created.
+2. No external direction file is required.
+3. Random directions are generated inside vLLM workers using deterministic
+   seeds derived from the direction seed, direction index, and parameter name.
+4. Only parameters with requires_grad=True are perturbed. Each parameter's
+   random direction is normalized to approximately unit RMS.
+5. Base weights and random directions are cached on CPU in FP32.
+   No persistent GPU copy of the random direction is retained.
+6. Each alpha point is computed directly from the cached base weights:
 
-       theta <- theta + (alpha_new - alpha_old) * scale * d
+       coefficient = scale * alpha
+       theta(alpha) = cast_to_model_dtype(theta_base_fp32 + coefficient * d_fp32)
 
-7. group_size is implemented with SamplingParams(n=group_size).
-8. vLLM automatically batches all prompts.
+   Updates do not accumulate perturbations from previous alpha points.
+7. Before installing a new direction, cached base weights are restored.
+   The same vLLM instance is reused across directions.
+8. Multiple completions per prompt are requested with
+   SamplingParams(n=group_size), and vLLM manages inference batching.
+9. Supports chess, GSM8K, and Math500 evaluation, and saves reward statistics
+   and per-completion records to CSV files.
+10. Produces absolute and baseline-normalized reward plots with
+    generation-mean standard-error bands. Relative plots require a unique
+    zero-coefficient result with a finite, nonzero baseline reward.
 """
 
 import argparse
@@ -109,7 +122,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=128,
+        default=2048,
     )
 
     parser.add_argument(
@@ -1371,75 +1384,42 @@ def stable_seed(
     ) % (2**63 - 1)
 
 
-def make_random_delta_perturb_function(
+def install_random_direction(
+    llm,
     direction_seed: int,
     direction_index: int,
-    delta_coefficient: float,
 ):
-    """
-    Modify current vLLM model:
+    def worker_install(model):
+        old_base = getattr(model, "_landscape_base_fp32", None)
 
-        theta <- theta + delta_coefficient * d
+        if old_base is not None:
+            with torch.no_grad():
+                for name, parameter in model.named_parameters():
+                    if name in old_base:
+                        parameter.copy_(
+                            old_base[name].to(
+                                device=parameter.device,
+                                dtype=parameter.dtype,
+                            )
+                        )
 
-    where d is a deterministic random direction.
-
-    IMPORTANT:
-
-    We do NOT store d.
-
-    Instead, every time this function is called, the same random
-    direction is regenerated from:
-
-        direction_seed
-        direction_index
-        parameter_name
-
-    Therefore:
-
-        alpha_1 -> generate d -> theta + delta_1 d
-        alpha_2 -> generate SAME d -> theta + delta_2 d
-
-    The direction is not kept in GPU memory.
-    """
-
-    def perturb_model(
-        model: torch.nn.Module,
-    ) -> int:
-
-        updated = 0
+        base_state = {}
+        direction_state = {}
 
         with torch.no_grad():
-
-            for name, parameter in (
-                model.named_parameters()
-            ):
-
-                # ------------------------------------------------
-                # Skip parameters that should not be perturbed.
-                #
-                # Usually all trainable parameters are desired.
-                # ------------------------------------------------
-
+            for name, parameter in model.named_parameters():
                 if not parameter.requires_grad:
                     continue
 
-                seed = stable_seed(
-                    direction_seed,
-                    direction_index,
-                    name,
+                base_state[name] = (
+                    parameter.detach()
+                    .to(device="cpu", dtype=torch.float32)
+                    .clone()
                 )
 
-                # ------------------------------------------------
-                # Generate deterministic random direction directly
-                # on the parameter's device.
-                # ------------------------------------------------
-
-                generator = torch.Generator(
-                    device=parameter.device
-                )
-
+                generator = torch.Generator(device=parameter.device)
                 generator.manual_seed(
-                    seed
+                    stable_seed(direction_seed, direction_index, name)
                 )
 
                 d = torch.randn(
@@ -1449,34 +1429,56 @@ def make_random_delta_perturb_function(
                     generator=generator,
                 )
 
-                # ------------------------------------------------
-                # Normalize each tensor so that its RMS is ~1.
-                #
-                # This prevents large parameter matrices from having
-                # an arbitrary scale simply because of their shape.
-                # ------------------------------------------------
-
                 rms = torch.sqrt(
-                    torch.mean(
-                        d.float().square()
+                    torch.mean(d.float().square()) + 1e-12
+                )
+                d = d / rms.to(dtype=d.dtype)
+
+                direction_state[name] = d.to(
+                    device="cpu",
+                    dtype=torch.float32,
+                )
+
+                del d
+
+        model._landscape_base_fp32 = base_state
+        model._landscape_direction_fp32 = direction_state
+
+        return len(base_state)
+
+    return llm.apply_model(worker_install)
+
+
+def set_random_coefficient(llm, coefficient: float):
+    coefficient = float(coefficient)
+
+    def worker_set(model):
+        base_state = model._landscape_base_fp32
+        direction_state = model._landscape_direction_fp32
+
+        with torch.no_grad():
+            for name, parameter in model.named_parameters():
+                if name not in base_state:
+                    continue
+
+                # 非原地操作，原始权重始终保持不变。
+                target = base_state[name].add(
+                    direction_state[name],
+                    alpha=coefficient,
+                )
+
+                parameter.copy_(
+                    target.to(
+                        device=parameter.device,
+                        dtype=parameter.dtype,
                     )
-                    + 1e-12
                 )
 
-                d = d / rms.to(
-                    dtype=d.dtype
-                )
+                del target
 
-                parameter.add_(
-                    d,
-                    alpha=delta_coefficient,
-                )
+        return coefficient
 
-                updated += 1
-
-        return updated
-
-    return perturb_model
+    return llm.apply_model(worker_set)
 
 
 # ============================================================
@@ -2351,32 +2353,32 @@ def main() -> None:
         # accumulate on top of each other.
         # ----------------------------------------------------
 
-        if direction_index > 1:
+        # if direction_index > 1:
 
-            print(
-                "\nReinitializing vLLM "
-                "for the next random direction...",
-                flush=True,
-            )
+        #     print(
+        #         "\nReinitializing vLLM "
+        #         "for the next random direction...",
+        #         flush=True,
+        #     )
 
-            del llm
+        #     del llm
 
-            llm = LLM(
-                model=args.model_ckpt,
-                tokenizer=args.model_ckpt,
-                dtype="bfloat16",
-                trust_remote_code=True,
-                tensor_parallel_size=(
-                    args.tensor_parallel_size
-                ),
-                gpu_memory_utilization=(
-                    args.gpu_memory_utilization
-                ),
-                seed=args.seed,
-                max_model_len=args.max_model_len,
-            )
+        #     llm = LLM(
+        #         model=args.model_ckpt,
+        #         tokenizer=args.model_ckpt,
+        #         dtype="bfloat16",
+        #         trust_remote_code=True,
+        #         tensor_parallel_size=(
+        #             args.tensor_parallel_size
+        #         ),
+        #         gpu_memory_utilization=(
+        #             args.gpu_memory_utilization
+        #         ),
+        #         seed=args.seed,
+        #         max_model_len=args.max_model_len,
+        #     )
 
-            tokenizer = llm.get_tokenizer()
+        #     tokenizer = llm.get_tokenizer()
 
         # ----------------------------------------------------
         # Important:
@@ -2390,18 +2392,23 @@ def main() -> None:
         # where d is deterministic random direction.
         # ----------------------------------------------------
 
-        previous_coefficient = 0.0
+        result = install_random_direction(
+            llm,
+            direction_seed=args.direction_seed,
+            direction_index=direction_index,
+        )
+
+        print(
+            f"Installed parameter tensors per worker: {result}",
+            flush=True,
+        )
+
 
         for alpha in grid:
 
             coefficient = (
                 args.scale
                 * float(alpha)
-            )
-
-            delta = (
-                coefficient
-                - previous_coefficient
             )
 
             print(
@@ -2424,45 +2431,18 @@ def main() -> None:
             )
 
             print(
-                f"delta = "
-                f"{delta:.8f}"
-            )
-
-            print(
                 "-" * 80,
                 flush=True,
             )
 
             # ------------------------------------------------
             # Modify vLLM model directly.
-            #
-            # The direction is generated deterministically
-            # inside every worker.
-            #
-            # No direction file.
-            # No CPU direction copy.
-            # No persistent GPU direction copy.
             # ------------------------------------------------
 
-            if abs(delta) > 0:
-
-                perturb_fn = (
-                    make_random_delta_perturb_function(
-                        direction_seed=args.direction_seed,
-                        direction_index=direction_index,
-                        delta_coefficient=delta,
-                    )
-                )
-
-                result = llm.apply_model(
-                    perturb_fn
-                )
-
-                print(
-                    "Updated parameter tensors "
-                    f"per worker: {result}",
-                    flush=True,
-                )
+            set_random_coefficient(
+                llm,
+                coefficient,
+            )
 
             # ------------------------------------------------
             # Generate
