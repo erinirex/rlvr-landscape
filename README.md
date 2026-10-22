@@ -29,7 +29,7 @@ The goal is to observe how the reward landscape differs across **training stages
 ### Random Direction
 
 ```bash
-bash scripts/run_qwen_math500_vllm.sh
+bash scripts/run_qwen_math500_random.sh
 ```
 
 ### SGD Direction
