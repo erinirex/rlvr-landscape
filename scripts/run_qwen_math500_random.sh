@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# bash scripts/run_qwen_math500_vllm.sh
+
+# ============================================================
+# GPU settings
+# ============================================================
+export VLLM_ALLOW_INSECURE_SERIALIZATION=1
+GPU="0"
+PYTHON_SCRIPT="visualize_reward_landscape_vllm.py"
+TRAIN_SAMPLE=32
+CHECKPOINT_STEP=75
+LR="4e-6"
+TRAIN_GS=32
+
+# ============================================================
+# Model
+# ============================================================
+
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train100_lr_5e-6_max8192/v1-20260821-105102/checkpoint-100"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-275"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-75"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train8_lr_5e-6_max2048/v2-20260917-200704/checkpoint-250"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-50"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-10"
+
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train32_seed99_gs4_lr_${LR}_max2048/v2-20261009-005817/checkpoint-${CHECKPOINT_STEP}"
+
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train32_seed99_gs16_lr_${LR}_max2048/v0-20261009-105123/checkpoint-${CHECKPOINT_STEP}"
+
+MODEL_CKPT="/mnt/swordfish-pool2/erinxia/rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train32_seed99_gs32_lr_${LR}_max2048/v0-20261014-210623/checkpoint-${CHECKPOINT_STEP}"
+
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-50"
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-117"
+
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v18-20260903-125040/checkpoint-49"
+
+# EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_id299.jsonl"
+# EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_8.jsonl"
+
+# EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train.jsonl"
+
+EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_32.jsonl"
+
+TASK="math500"
+RL_TYPE="grpo"
+DATASET="math500"
+MODEL_NAME="qwen3_0.6b"
+# CHECKPOINT_STEP=275
+# CHECKPOINT_STEP=117
+
+
+# ============================================================
+# Evaluation
+# ============================================================
+
+NUM_SAMPLES=32
+
+MAX_NEW_TOKENS=2048
+
+SEED=42
+
+# 每个 prompt 生成多少个 samples
+GROUP_SIZE=64
+
+TMP=0.7
+TOP_P=0.8
+TOP_K=20
+
+# ============================================================
+# Random directions
+# ============================================================
+
+NUM_DIRECTIONS=1
+
+# ============================================================
+# Landscape
+# ============================================================
+
+SCALE=0.01
+ALPHA_RANGE=10
+NUM_POINTS=15
+
+# ============================================================
+# vLLM settings
+# ============================================================
+
+GPU_MEMORY_UTILIZATION=0.7
+MAX_NUM_SEQS=8
+MAX_MODEL_LEN=16384
+
+# ============================================================
+# Plot
+# ============================================================
+
+YMIN=0.0
+YMAX=1.1
+
+OUTPUT_DIR="figs_math500_grpo_random_lr_${LR}_vllm_train${TRAIN_SAMPLE}_gs${TRAIN_GS}"
+
+RUN_NAME="${RL_TYPE}_${DATASET}_${MODEL_NAME}"\
+"_random${NUM_DIRECTIONS}"\
+"_scale${SCALE}_alpha${ALPHA_RANGE}"\
+"_lr${LR}"\
+"_data${NUM_SAMPLES}_group${GROUP_SIZE}"\
+"_ckpt${CHECKPOINT_STEP}"\
+"_train_gs${TRAIN_GS}"\
+"_max_new${MAX_NEW_TOKENS}"\
+"_pts${NUM_POINTS}_seed${SEED}"\
+"_gpu${GPU}"\
+"_vllm"
+
+LOG_DIR="logs_math500_grpo_random_lr_${LR}_vllm_train${TRAIN_SAMPLE}_gs${TRAIN_GS}"
+
+mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}"
+
+LOG_FILE="${LOG_DIR}/${RUN_NAME}.log"
+
+# ============================================================
+# Print configuration
+# ============================================================
+
+echo "=========================================="
+echo "Starting ${RUN_NAME}"
+echo "=========================================="
+echo "GPU: ${GPU}"
+echo "MODEL: ${MODEL_CKPT}"
+echo "NUM_DIRECTIONS: ${NUM_DIRECTIONS}"
+echo "NUM_SAMPLES: ${NUM_SAMPLES}"
+echo "GROUP_SIZE: ${GROUP_SIZE}"
+echo "MAX_NEW_TOKENS: ${MAX_NEW_TOKENS}"
+echo "MAX_MODEL_LEN: ${MAX_MODEL_LEN}"
+echo "MAX_NUM_SEQS: ${MAX_NUM_SEQS}"
+echo "GPU_MEMORY_UTILIZATION: ${GPU_MEMORY_UTILIZATION}"
+echo "TEMPERATURE: ${TMP}"
+echo "TOP_P: ${TOP_P}"
+echo "TOP_K: ${TOP_K}"
+echo "SCALE: ${SCALE}"
+echo "ALPHA_RANGE: ${ALPHA_RANGE}"
+echo "NUM_POINTS: ${NUM_POINTS}"
+echo "SEED: ${SEED}"
+echo "Log: ${LOG_FILE}"
+echo "=========================================="
+
+# ============================================================
+# Run
+# ============================================================
+
+nohup env \
+  CUDA_VISIBLE_DEVICES="${GPU}" \
+  python "${PYTHON_SCRIPT}" \
+    --model-ckpt "${MODEL_CKPT}" \
+    --eval-json "${EVAL_JSON}" \
+    --task "${TASK}" \
+    --lr "${LR}" \
+    --rl-type "${RL_TYPE}" \
+    --dataset "${DATASET}" \
+    --model-name "${MODEL_NAME}" \
+    --checkpoint-step "${CHECKPOINT_STEP}" \
+    --num-samples "${NUM_SAMPLES}" \
+    --group-size "${GROUP_SIZE}" \
+    --temperature "${TMP}" \
+    --top-p "${TOP_P}" \
+    --top-k "${TOP_K}" \
+    --max-new-tokens "${MAX_NEW_TOKENS}" \
+    --seed "${SEED}" \
+    --scale "${SCALE}" \
+    --alpha-range "${ALPHA_RANGE}" \
+    --num-points "${NUM_POINTS}" \
+    --num-directions "${NUM_DIRECTIONS}" \
+    --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
+    --max-num-seqs "${MAX_NUM_SEQS}" \
+    --max-model-len "${MAX_MODEL_LEN}" \
+    --output-dir "${OUTPUT_DIR}" \
+    --ymin "${YMIN}" \
+    --ymax "${YMAX}" \
+  > "${LOG_FILE}" 2>&1 &
+
+PID=$!
+
+echo "Started PID ${PID}"
+echo "Log: ${LOG_FILE}"
+echo
+echo "Follow log with:"
+echo "tail -f ${LOG_FILE}"
