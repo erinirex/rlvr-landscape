@@ -25,7 +25,7 @@ torchrun --nproc_per_node=1 --master_port=29501 \
 --seed "${SEED}" \
 --save_strategy steps \
 --save_steps 100 \
---external_plugins "${SWIFT_DIR}/custom_save.py" "${SWIFT_DIR}/sample_pass_rate.py" \
+--external_plugins "${SWIFT_DIR}/custom_save.py" \
 --load_best_model_at_end false \
 --rlhf_type grpo \
 --loss_type grpo \
