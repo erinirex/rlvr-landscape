@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import sys
+sys.path.insert(0, "/mnt/swordfish-pool2/erinxia/ms-swift")
 
 import argparse
 import gc

@@ -86,6 +86,18 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--train-gs",
+        type=int,
+        default=None,
+    )
+
+    parser.add_argument(
+        "--train-seed",
+        type=int,
+        default=None,
+    )
+
+    parser.add_argument(
         "--num-samples",
         type=int,
         default=25,
@@ -111,13 +123,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--temperature",
         type=float,
-        default=1.0,
+        default=0.7,
     )
 
     parser.add_argument(
         "--top-p",
         type=float,
-        default=1.0,
+        default=0.8,
     )
 
     parser.add_argument(
@@ -1382,8 +1394,8 @@ def install_random_direction(
 
         with torch.no_grad():
             for name, parameter in model.named_parameters():
-                if not parameter.requires_grad:
-                    continue
+                # if not parameter.requires_grad:
+                #     continue
 
                 base_state[name] = (
                     parameter.detach()
@@ -2062,11 +2074,11 @@ def save_results(
 
         mode = "relative" if relative else "absolute"
         ax.set_title(
-            f"{args.rl_type.upper()} "
             f"{args.dataset} "
+            f"{mode} "
             f"step {args.checkpoint_step} "
-            f"{mode} reward landscape "
-            f"({title_suffix})"
+            f"train seed {args.train_seed} "
+            f"train gs {args.train_gs} "
         )
 
         ax.set_xlabel("Perturbation coefficient")
