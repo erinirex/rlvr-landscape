@@ -4,12 +4,13 @@
 
 set -euo pipefail
 
-SEED=99
+SEED=42
+GS=16
 RUN_DIR="${RUN_DIR:-$(pwd)}"
 SWIFT_DIR="/mnt/swordfish-pool2/erinxia/ms-swift"
 
 SWANLAB_API_KEY="aXbj9cLiFZXRzTiSUeHba"
-LOG_FILE="${RUN_DIR}/grpo_qwen3_0.6b_nonthink_math500_train32_seed${SEED}_lr_6e-6_max2048_200stp_gs16.log"
+LOG_FILE="${RUN_DIR}/grpo_qwen3_0.6b_nonthink_math500_train32_seed${SEED}_lr_6e-6_max2048_70stp_gs16.log"
 OUTPUT_DIR="${RUN_DIR}/output_qwen3_0.6b_nonthink_grpo_math500_train32_seed${SEED}_gs16_lr_6e-6_max2048"
 
 if [[ -z "${SWANLAB_API_KEY:-}" ]]; then
@@ -20,37 +21,38 @@ fi
 cd "${SWIFT_DIR}"
 
 nohup env \
-CUDA_VISIBLE_DEVICES=0,1,2,3 \
+CUDA_VISIBLE_DEVICES=0,1 \
 SWANLAB_API_KEY="${SWANLAB_API_KEY}" \
-SWANLAB_GROUP="qwen3_0.6b/train32_gs16" \
-torchrun --nproc_per_node=4 --master_addr=127.0.0.1 --master_port=29502 \
+SWANLAB_GROUP="qwen3_0.6b/train32_gs${GS}" \
+torchrun --nproc_per_node=2 --master_addr=127.0.0.1 --master_port=29502 \
 -m swift.cli.rlhf \
 --seed "${SEED}" \
---callbacks custom_save \
---save_strategy steps \
+--callbacks reward_threshold_save \
+--save_strategy no \
 --external_plugins "${SWIFT_DIR}/custom_save.py" \
 --load_best_model_at_end false \
 --rlhf_type grpo \
 --loss_type grpo \
---deepspeed zero3 \
+--deepspeed zero2 \
 --model /tmp/erin/Qwen3-0.6B \
 --remove_unused_columns false \
 --num_iterations 1 \
---max_steps 200 \
+--max_steps 70 \
 --log_completions true \
 --log_entropy true \
 --swanlab_project math500-grpo-run30 \
---swanlab_exp_name "train32_seed${SEED}_gs16_lr6e-6_max2048" \
+--swanlab_exp_name "train32_seed${SEED}_gs${GS}_lr6e-6_max2048" \
 --per_device_train_batch_size 2 \
 --per_device_eval_batch_size 4 \
---gradient_accumulation_steps 16 \
+--gradient_accumulation_steps 32 \
 --temperature 0.7 \
 --top_k 20 \
 --top_p 0.8 \
 --lr_scheduler_type constant_with_warmup \
 --warmup_ratio 0.05 \
 --learning_rate 6e-6 \
---eval_steps 100 \
+--eval_steps 2 \
+--eval_on_start false \
 --eval_strategy steps \
 --save_only_model false \
 --enable_thinking false \
@@ -59,14 +61,14 @@ torchrun --nproc_per_node=4 --master_addr=127.0.0.1 --master_port=29502 \
 --max_new_tokens 2048 \
 --logging_steps 1 \
 --num_generations 16 \
---num_generations_eval 2 \
+--num_generations_eval 8 \
 --tuner_type full \
 --report_to swanlab \
 --use_vllm true \
 --vllm_mode colocate \
 --vllm_gpu_memory_utilization 0.5 \
 --dataset /mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_32.jsonl \
---val_dataset /mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/test.jsonl \
+--val_dataset /mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_32.jsonl \
 --output_dir "${OUTPUT_DIR}" \
 > "${LOG_FILE}" 2>&1 &
 

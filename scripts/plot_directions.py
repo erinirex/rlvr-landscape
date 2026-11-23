@@ -1,4 +1,35 @@
 #!/usr/bin/env python3
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_train32_global_norm/scale60_alpha1_train_gs16_lr4e-6_data32_group64_ckpt75_max_new2048_pts15_seed42
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_train32_global_norm/scale60_alpha1_train_gs16_lr2e-6_data32_group64_ckpt140_max_new2048_pts15_seed42
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_train32_global_norm/scale60_alpha1_train_gs16_lr4e-6_data32_group64_ckpt78_max_new2048_pts25_seed42
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_train32_global_norm/scale60_alpha1_train_gs4_lr4e-6_data32_group64_ckpt154_max_new2048_pts25_seed42
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_train32_global_norm/scale60_alpha1_train_gs16_lr2e-6_data32_group64_ckpt134_max_new2048_pts25_seed42
+
+# python scripts/plot_directions.py --root /rlvr-landscape/output_qwen3_0.6b_nonthink_grpo_math500_train32new_seed50_gs16_lr_4e-6_max2048mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_train32_global_norm/scale60_alpha1_train_gs16_lr6e-6_data32_group64_ckpt52_max_new2048_pts25_seed42
+    
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_newdata_train32_global_norm/scale60_alpha1_train_gs32_train_seed50_train_prompt32_lr4e-6_data32_group64_ckpt40_max_new2048_pts15_seed42
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_newdata_train32_global_norm/scale60_alpha1_train_gs16_train_seed99_train_prompt32_lr4e-6_data32_group64_ckpt46_max_new2048_pts15_seed42
+
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_newdata_train32_global_norm/scale60_alpha1_train_gs4_train_seed50_train_prompt32_lr5e-6_data32_group64_ckpt56_max_new2048_pts15_seed42
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_newdata_train32_global_norm/scale60_alpha1_train_gs16_train_seed50_train_prompt32_lr4e-6_data32_group64_ckpt56_max_new2048_pts15_seed42
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_newdata_train32_global_norm/scale60_alpha1_train_gs4_train_seed50_train_prompt32_lr3.5e-6_data32_group64_ckpt52_max_new2048_pts11_seed42
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_newdata_train32_global_norm/scale60_alpha1_train_gs32_train_seed50_train_prompt32_lr3e-6_data32_group64_ckpt94_max_new2048_pts11_seed42
+
+# python scripts/plot_directions.py --root /mnt/swordfish-pool2/erinxia/rlvr-landscape/landscape_math500_grpo_random_newdata_train32_global_norm/scale60_alpha1_train_gs16_train_seed50_train_prompt32_lr3e-6_data32_group64_ckpt94_max_new2048_pts11_seed42
+
+
+
 """Plot completed per-direction CSV files without loading vLLM or torch."""
 import argparse
 import json

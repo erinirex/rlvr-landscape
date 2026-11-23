@@ -11,25 +11,26 @@ export VLLM_ALLOW_INSECURE_SERIALIZATION=1
 
 # IMPORTANT:
 # Python script is configured for 2-GPU vLLM TP=2
-GPU="0"
+GPU="3"
 
 PYTHON_SCRIPT="visualize_reward_landscape_sgd.py"
 
 # ============================================================
 # Model
 # ============================================================
-CHECKPOINT_STEP=110
+CHECKPOINT_STEP=50
 
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v2-20260902-234342/checkpoint-100"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-75"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_5e-6_max2048/v7-20260903-071819/checkpoint-275"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train8_lr_5e-6_max2048/v2-20260917-200704/checkpoint-100"
-MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-${CHECKPOINT_STEP}"
-
+# MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train8_50_80_lr_5e-6_max2048/v1-20260925-122541/checkpoint-${CHECKPOINT_STEP}"
+MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train1_lr_5e-6_max2048/v0-20260916-223901/checkpoint-50"
 # MODEL_CKPT="/mnt/swordfish-pool2/erinxia/ms-swift/output_qwen3_0.6b_nonthink_grpo_math500_train300_lr_3e-6_max2048/v0-20260910-192151/checkpoint-120"
 # EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train.jsonl"
 # EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_8.jsonl"
 EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_id299.jsonl"
+# EVAL_JSON="/mnt/swordfish-pool2/erinxia/rlvr-landscape/train_data/math500/train_8_50_80.jsonl"
 
 
 MODEL_NAME="qwen3_0.6b"
@@ -66,8 +67,9 @@ NUM_DIRECTIONS=1
 # DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/figs_math500_grpo_sgd/directions/qwen3_0.6b_step100_grpo_direction_0.pt"
 # DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions/qwen3_0.6b_step120_sgd_raw_direction_0.pt"
 # DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions_train8/qwen3_0.6b_step100_sgd_raw_direction_0.pt"
-DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions_train1/qwen3_0.6b_step${CHECKPOINT_STEP}_sgd_raw_direction_0_gs32.pt"
-# DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions_train1/qwen3_0.6b_step100_sgd_raw_direction_0_gs32.pt"
+# DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions_train1/qwen3_0.6b_step${CHECKPOINT_STEP}_sgd_raw_direction_0_gs32.pt"
+DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions_train1/qwen3_0.6b_step100_sgd_raw_direction_0_gs32.pt"
+# DIRECTION_PATH="/mnt/swordfish-pool2/erinxia/rlvr-landscape/sgd_directions_train8_50_80/qwen3_0.6b_step10_sgd_raw_direction_0_gs32.pt"
 
 DIRECTION_TYPE="grpo-grad"
 
@@ -87,7 +89,7 @@ NUM_POINTS=31
 
 TENSOR_PARALLEL_SIZE=1
 
-GPU_MEMORY_UTILIZATION=0.25
+GPU_MEMORY_UTILIZATION=0.7
 
 MAX_MODEL_LEN=16384
 
@@ -97,9 +99,9 @@ DTYPE="bfloat16"
 # Output
 # ============================================================
 
-OUTPUT_DIR="figs_math500_grpo_sgd_train1"
+OUTPUT_DIR="figs_math500_grpo_sgd_train8_50_80"
 
-LOG_DIR="logs_math500_grpo_sgd_train1"
+LOG_DIR="logs_math500_grpo_sgd_train8_50_80"
 
 RUN_NAME="${DIRECTION_TYPE}"\
 "_${MODEL_NAME}"\
